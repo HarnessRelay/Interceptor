@@ -67,14 +67,23 @@ export HARNESSRELAY_TOKEN=...
 The dashboard supports:
 
 - session list
-- create session form
-- xterm.js terminal view
+- create session form with Chat or Terminal start mode
+- chat-first harness interaction view
+- xterm.js terminal fallback view
 - live WebSocket output
-- keyboard input and paste
+- prompt composer that sends text into the PTY
+- slash-command menu for interrupt, terminate, special keys, snapshot refresh, and Terminal Mode fallback
+- keyboard input and paste in Terminal Mode
 - resize propagation
 - interrupt, terminate, and force-kill controls
 - reconnect by replaying recent in-memory output history
-- basic event list
+- compact debug/event inspector
+
+Chat Mode is a readable interface over the same managed PTY session. It groups user-submitted prompts and terminal output chunks into transcript-style messages, but it does not claim full semantic understanding of every harness. The raw terminal session remains the source of truth and can be opened at any time.
+
+Terminal Mode preserves the xterm.js raw terminal experience for exact TUI rendering, keyboard capture, paste, resize, and fallback control.
+
+The dashboard logo assets live in `web/src/assets/`. `HarnessRelay_Without_Text.png` is used for the favicon and compact app mark; `HarnessRelay_With_Text.png` is used where the full wordmark fits.
 
 Run dashboard development mode:
 
@@ -85,6 +94,14 @@ npm run dev
 ```
 
 The Vite dev server proxies `/api` to `http://127.0.0.1:8765`.
+
+Dashboard smoke coverage:
+
+```bash
+HARNESSRELAY_TOKEN=dashboard-token node qa/dashboard-smoke.mjs
+```
+
+The smoke logs in, creates sessions in Chat Mode and Terminal Mode, sends prompt/input through both views, switches between modes, verifies reconnect snapshots, and exercises interrupt/terminate controls.
 
 ## Security
 

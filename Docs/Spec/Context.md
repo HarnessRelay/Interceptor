@@ -23,6 +23,8 @@ Stage 1 is focused only on:
 
 The web dashboard is the first client. It should be treated as the reference implementation for the common API.
 
+For the Stage 1 web direction, the dashboard should be a chat-first harness control interface with a selectable raw terminal mode. Terminal mode remains mandatory as the universal fallback because the raw PTY stream is the source of truth for unsupported or uncertain harness behavior.
+
 ## Core Problem
 
 Many coding harnesses run as terminal user interfaces. Examples include:

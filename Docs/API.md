@@ -106,6 +106,15 @@ Snapshot returns recent raw replay chunks:
 
 Semantic actions currently validate event/action freshness and return `501` for recognized actions because no real harness action executor is implemented yet. Stale or unknown actions return `409`.
 
+## Dashboard Display Modes
+
+Chat Mode and Terminal Mode are dashboard presentation preferences over the same session APIs. No backend API shape is currently changed for mode selection.
+
+- Chat Mode sends composer submissions to `POST /sessions/{id}/input` as raw PTY bytes followed by Enter.
+- The `/` action menu uses existing input, interrupt, terminate, kill, snapshot, and key endpoints.
+- Terminal Mode uses the same snapshot, WebSocket, input, and resize endpoints as the original xterm.js view.
+- Mode preference is currently stored in browser-local state per session. The raw PTY session remains the source of truth.
+
 ## WebSocket
 
 ```text

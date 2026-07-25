@@ -493,6 +493,7 @@ Goal: create a usable browser dashboard for Stage 1 validation.
 - [x] Support command input.
 - [x] Support working directory input.
 - [x] Support session name input.
+- [x] Add Chat/Terminal mode selector before session start.
 - [x] Show validation errors.
 
 ## 10.3 Terminal UI
@@ -519,6 +520,21 @@ Goal: create a usable browser dashboard for Stage 1 validation.
 - [x] Submit action by event ID and action ID.
 - [x] Show action success/failure.
 - [x] Fall back to raw terminal when semantic event is uncertain.
+
+## 10.6 Chat-First Web Direction
+
+- [x] Refactor dashboard frontend out of one large `main.tsx`.
+- [x] Add Chat Mode as the default dashboard view.
+- [x] Add Terminal Mode as a selectable raw xterm.js fallback view.
+- [x] Allow switching Chat/Terminal views without restarting the session.
+- [x] Send Chat Mode composer submissions into the PTY.
+- [x] Render terminal output in readable transcript-style blocks.
+- [x] Add `/` slash-command action menu.
+- [x] Keep force kill behind confirmation.
+- [x] Make event/debug output collapsible instead of dominant.
+- [x] Apply navy/teal HarnessRelay theme direction.
+- [x] Document logo asset placement.
+- [x] Extend dashboard smoke coverage for Chat Mode, Terminal Mode, switching, reconnect, interrupt, and terminate.
 
 ---
 

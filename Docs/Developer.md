@@ -16,6 +16,13 @@
 - `web`: Vite/React/xterm.js dashboard
 - `testdata/fake-harnesses`: repeatable fake terminal programs
 
+The dashboard source is split into:
+
+- `web/src/api`: browser API client and CSRF-aware request helper
+- `web/src/components`: sidebar, session header, Chat Mode, Terminal Mode, slash menu, and event inspector
+- `web/src/theme`: shared navy/teal product tokens
+- `web/src/assets`: owner-provided logo placement notes
+
 ## Commands
 
 ```bash
@@ -37,7 +44,7 @@ google-chrome --headless=new --remote-debugging-address=127.0.0.1 --remote-debug
 HARNESSRELAY_TOKEN=dashboard-token node qa/dashboard-smoke.mjs
 ```
 
-The smoke logs in, creates a fake interactive session, sends raw input through the dashboard, and verifies the echoed output through the dashboard-authenticated snapshot API.
+The smoke logs in, creates a Chat Mode shell session, sends a prompt through the composer, switches to Terminal Mode, sends raw terminal input, switches back to Chat Mode, reloads to verify reconnect/snapshot behavior, creates a Terminal Mode session, and exercises interrupt/terminate controls.
 
 ## Fake Harnesses
 
@@ -66,6 +73,8 @@ Attach mode puts the local terminal in raw mode, forwards input through the daem
 ## Adapter Notes
 
 Every session must remain usable through raw terminal fallback. Harness-specific adapters should be optional and capability-based.
+
+Chat Mode is intentionally a friendly projection over raw PTY output. Terminal output is stripped into readable transcript blocks where possible, but uncertain TUI state must be verified in Terminal Mode. Do not present Chat Mode as a complete semantic parser until a harness adapter provides reliable structured events.
 
 Core adapter rules:
 

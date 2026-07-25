@@ -1,0 +1,149 @@
+import { useEffect, useRef, useState } from "react";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import { api } from "../api/client";
+import type { EventEnvelope, Session, Snapshot } from "../types";
+import { decodeBase64 } from "../utils";
+
+export function TerminalView({
+  session,
+  onOpenChat,
+  onSessionUpdate,
+  onEvent,
+  onError
+}: {
+  session: Session;
+  onOpenChat: () => void;
+  onSessionUpdate: () => void;
+  onEvent: (event: EventEnvelope) => void;
+  onError: (message: string) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const latestSeq = useRef(0);
+  const [rawInput, setRawInput] = useState("");
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const term = new Terminal({
+      cursorBlink: true,
+      convertEol: true,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontSize: 13,
+      theme: {
+        background: "#080d14",
+        foreground: "#f4f7fb",
+        cursor: "#16e0b5",
+        selectionBackground: "#263244"
+      }
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(hostRef.current);
+    terminalRef.current = term;
+    fitRef.current = fit;
+
+    let socket: WebSocket | null = null;
+    let resizeTimer = 0;
+    let disposed = false;
+
+    const sendResize = () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        if (disposed || !fitRef.current || !terminalRef.current) return;
+        fitRef.current.fit();
+        const activeTerm = terminalRef.current;
+        api.resize(session.id, activeTerm.rows, activeTerm.cols).catch((err) => onError(err.message));
+      }, 90);
+    };
+
+    const resizeObserver = new ResizeObserver(sendResize);
+    resizeObserver.observe(hostRef.current);
+
+    term.onData((data) => {
+      api.input(session.id, data).catch((err) => onError(err.message));
+    });
+
+    const writeSnapshot = (snapshot: Snapshot, reset = false) => {
+      latestSeq.current = snapshot.latest_seq || 0;
+      if (reset) term.reset();
+      for (const chunk of snapshot.chunks) {
+        term.write(decodeBase64(chunk.bytes));
+      }
+    };
+
+    api.snapshot(session.id)
+      .then((snapshot) => {
+        writeSnapshot(snapshot);
+        fit.fit();
+        return api.resize(session.id, term.rows, term.cols);
+      })
+      .catch((err: Error) => onError(err.message))
+      .finally(() => {
+        if (disposed) return;
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws?session_id=${encodeURIComponent(session.id)}&after_seq=${latestSeq.current}`);
+        socket.onopen = () => setConnected(true);
+        socket.onclose = () => setConnected(false);
+        socket.onerror = () => onError("WebSocket stream failed.");
+        socket.onmessage = (message) => {
+          const event = JSON.parse(message.data) as EventEnvelope;
+          latestSeq.current = Math.max(latestSeq.current, event.seq || 0);
+          onEvent(event);
+          if (event.type === "terminal.output") {
+            const payload = event.data as { data?: string; bytes?: string };
+            const encoded = payload?.bytes || payload?.data;
+            if (encoded) term.write(decodeBase64(encoded));
+          }
+          if (event.type === "session.exited") {
+            api.snapshot(session.id).then((snapshot) => writeSnapshot(snapshot, true)).catch((err: Error) => onError(err.message));
+          }
+          if (event.type === "session.exited" || event.type === "session.status_changed") {
+            onSessionUpdate();
+          }
+        };
+      });
+
+    term.focus();
+    sendResize();
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(resizeTimer);
+      resizeObserver.disconnect();
+      socket?.close();
+      term.dispose();
+      terminalRef.current = null;
+      fitRef.current = null;
+      setConnected(false);
+    };
+  }, [session.id, onError, onEvent, onSessionUpdate]);
+
+  async function sendRawInput() {
+    if (!rawInput) return;
+    try {
+      await api.input(session.id, rawInput);
+      setRawInput("");
+      terminalRef.current?.focus();
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  }
+
+  return (
+    <section className="terminal-section" aria-label="Terminal mode">
+      <div className="terminal-bar">
+        <span className={connected ? "stream-state is-connected" : "stream-state"}>{connected ? "Live stream" : "Connecting"}</span>
+        <span>{session.terminal.rows}×{session.terminal.cols}</span>
+        <button onClick={onOpenChat}>Open Chat</button>
+      </div>
+      <div className="terminal-host" ref={hostRef} />
+      <div className="raw-input">
+        <textarea value={rawInput} onChange={(event) => setRawInput(event.target.value)} placeholder="Raw input fallback" />
+        <button onClick={sendRawInput}>Send</button>
+      </div>
+    </section>
+  );
+}
