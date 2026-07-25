@@ -1,2 +1,2 @@
-// Package generic will provide the raw terminal fallback adapter in a later phase.
+// Package generic provides the mandatory raw terminal fallback adapter.
 package generic

@@ -1,2 +1,2 @@
-// Package storage will persist metadata, events, and audit history in a later phase.
+// Package storage contains bounded in-memory history and audit helpers.
 package storage

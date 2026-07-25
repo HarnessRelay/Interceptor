@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,7 +14,10 @@ import (
 
 	"github.com/harnessrelay/interceptor/internal/api"
 	"github.com/harnessrelay/interceptor/internal/config"
+	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/logging"
+	"github.com/harnessrelay/interceptor/internal/security"
+	"github.com/harnessrelay/interceptor/internal/session"
 )
 
 const version = "dev"
@@ -55,12 +59,34 @@ func serve() error {
 	if err != nil {
 		return err
 	}
+	if os.Geteuid() == 0 && !cfg.Security.AllowRootForTesting {
+		return errors.New("refusing to run as root; set HARNESSRELAY_ALLOW_ROOT_FOR_TESTING=1 only for tests")
+	}
 	logger := logging.New(os.Stdout, slog.LevelInfo)
+	bus := events.NewBus()
+	sessions := session.NewManagerWithBus(bus)
+	authToken := cfg.Security.AuthToken
+	if authToken == "" {
+		authToken = security.GenerateToken()
+		logger.Warn("generated local dashboard token for this process; set HARNESSRELAY_TOKEN to provide a stable token",
+			slog.String("local_auth_token", authToken),
+		)
+	}
+	auth := security.NewAuthenticator(authToken)
+	if !security.IsLocalBind(cfg.Address()) {
+		logger.Warn("harnessd binding outside localhost; remote access can control terminal sessions",
+			slog.String("bind_address", cfg.BindAddress),
+			slog.Int("port", cfg.Port),
+		)
+	}
 
 	router := api.NewRouter(api.Options{
 		Logger:   logger,
 		Version:  version,
-		StaticFS: os.DirFS("web"),
+		StaticFS: dashboardFS(),
+		Sessions: sessions,
+		Events:   bus,
+		Auth:     auth,
 	})
 
 	server := &http.Server{
@@ -105,4 +131,11 @@ func serve() error {
 	}
 	logger.Info("harnessd stopped")
 	return nil
+}
+
+func dashboardFS() fs.FS {
+	if info, err := os.Stat("web/dist"); err == nil && info.IsDir() {
+		return os.DirFS("web/dist")
+	}
+	return os.DirFS("web")
 }

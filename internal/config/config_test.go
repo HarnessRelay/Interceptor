@@ -26,6 +26,40 @@ func TestDefaultTerminalHistoryLimit(t *testing.T) {
 	}
 }
 
+func TestLoadSecurityEnvironment(t *testing.T) {
+	t.Setenv("HARNESSRELAY_TOKEN", "local-secret")
+	t.Setenv("HARNESSRELAY_ALLOW_ROOT_FOR_TESTING", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Security.AuthToken != "local-secret" {
+		t.Fatalf("AuthToken = %q, want local-secret", cfg.Security.AuthToken)
+	}
+	if !cfg.Security.AllowRootForTesting {
+		t.Fatal("AllowRootForTesting = false, want true")
+	}
+}
+
+func TestLoadRejectsNonLocalBindWithoutExplicitAllow(t *testing.T) {
+	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "0.0.0.0")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted non-local bind without explicit allow")
+	}
+}
+
+func TestLoadAllowsExplicitNonLocalBind(t *testing.T) {
+	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "0.0.0.0")
+	t.Setenv("HARNESSRELAY_ALLOW_NONLOCAL_BIND", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BindAddress != "0.0.0.0" {
+		t.Fatalf("BindAddress = %q, want 0.0.0.0", cfg.BindAddress)
+	}
+}
+
 func TestDefaultStoragePathUsesXDGDataHome(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
 	cfg := Default()

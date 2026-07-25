@@ -86,6 +86,7 @@ func TestManagerList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	time.Sleep(10 * time.Millisecond)
 
 	s2, err := mgr.Create(context.Background(), CreateOptions{
 		Name:    "session-two",
@@ -110,6 +111,9 @@ func TestManagerList(t *testing.T) {
 	}
 	if !ids[s1.ID] || !ids[s2.ID] {
 		t.Fatalf("List missing expected IDs: %v", ids)
+	}
+	if list[0].ID != s2.ID || list[1].ID != s1.ID {
+		t.Fatalf("List order = [%s, %s], want newest session first [%s, %s]", list[0].ID, list[1].ID, s2.ID, s1.ID)
 	}
 }
 
@@ -165,6 +169,87 @@ func TestManagerWriteInput(t *testing.T) {
 	}
 
 	readUntil(t, sub, "echo:hello", 5*time.Second)
+}
+
+func TestManagerFakeApprovalHarness(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "approval-prompt.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "approve? [y/N]", 5*time.Second)
+
+	if err := mgr.Write(sess.ID, []byte("y\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	readUntil(t, sub, "approved", 5*time.Second)
+	waitSessionDone(t, sess, 5*time.Second)
+}
+
+func TestManagerPublishesGenericApprovalHeuristic(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sub := bus.Subscribe(events.SubscribeOptions{Types: []events.Type{events.TypeApprovalRequired}, Buffer: 4})
+	defer sub.Close()
+
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "approval-prompt.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-sub.C:
+			if event.Type != events.TypeApprovalRequired {
+				continue
+			}
+			if event.SessionID != sess.ID {
+				t.Fatalf("event session = %q, want %q", event.SessionID, sess.ID)
+			}
+			data := event.Data.(map[string]any)
+			if data["confidence"] != "heuristic" {
+				t.Fatalf("confidence = %v, want heuristic", data["confidence"])
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for approval.required event")
+		}
+	}
+}
+
+func TestManagerFakeFullscreenHarness(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "fullscreen-redraw.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	waitSessionDone(t, sess, 5*time.Second)
+	out := string(sess.Snapshot())
+	if !strings.Contains(out, "\x1b[?1049h") {
+		t.Fatalf("snapshot missing alternate-screen enter sequence: %q", out)
+	}
+	if !strings.Contains(out, "fullscreen complete") {
+		t.Fatalf("snapshot missing completion text: %q", out)
+	}
 }
 
 func TestManagerInterrupt(t *testing.T) {
@@ -242,6 +327,67 @@ func TestManagerTerminateKillsSIGTERMIgnoringProcess(t *testing.T) {
 	}
 }
 
+func TestManagerKill(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "long-running.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "ready", 5*time.Second)
+
+	if err := mgr.Kill(sess.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if sess.Status != StatusTerminated {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusTerminated)
+	}
+}
+
+func TestManagerCleanupCompletedSession(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if err := mgr.Cleanup(sess.ID); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if _, ok := mgr.Get(sess.ID); ok {
+		t.Fatal("session still present after cleanup")
+	}
+}
+
+func TestManagerCleanupRejectsRunningSession(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "long-running.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+	if err := mgr.Cleanup(sess.ID); err == nil {
+		t.Fatal("Cleanup accepted running session")
+	}
+}
+
 func TestManagerResize(t *testing.T) {
 	mgr := NewManager()
 	sess, err := mgr.Create(context.Background(), CreateOptions{
@@ -284,6 +430,12 @@ func TestManagerUnknownSessionErrors(t *testing.T) {
 	if err := mgr.Terminate(ctx, unknownID); err == nil {
 		t.Fatal("Terminate on unknown session should fail")
 	}
+	if err := mgr.Kill(unknownID); err == nil {
+		t.Fatal("Kill on unknown session should fail")
+	}
+	if err := mgr.Cleanup(unknownID); err == nil {
+		t.Fatal("Cleanup on unknown session should fail")
+	}
 }
 
 func TestManagerWriteAndInterruptOnExitedSession(t *testing.T) {
@@ -306,6 +458,31 @@ func TestManagerWriteAndInterruptOnExitedSession(t *testing.T) {
 	ctx := context.Background()
 	if err := mgr.Terminate(ctx, sess.ID); err == nil {
 		t.Fatal("Terminate on exited session should fail")
+	}
+	if err := mgr.Kill(sess.ID); err == nil {
+		t.Fatal("Kill on exited session should fail")
+	}
+}
+
+func TestManagerResizeAfterExitUpdatesMetadata(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+		Rows:    24,
+		Cols:    80,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if err := mgr.Resize(sess.ID, 40, 100); err != nil {
+		t.Fatalf("Resize after exit: %v", err)
+	}
+	info := sess.Info()
+	if info.Terminal.Rows != 40 || info.Terminal.Cols != 100 {
+		t.Fatalf("terminal size = %dx%d, want 40x100", info.Terminal.Rows, info.Terminal.Cols)
 	}
 }
 
@@ -356,6 +533,17 @@ func TestSessionSubscriptionAfterExit(t *testing.T) {
 	}
 	if !hasDone {
 		t.Fatal("late subscription did not receive Done")
+	}
+}
+
+func TestOutputBufferKeepsNewestBytes(t *testing.T) {
+	buf := newOutputBuffer(5)
+	buf.Write([]byte("hello"))
+	buf.Write([]byte("world"))
+
+	got := string(buf.snapshot())
+	if got != "world" {
+		t.Fatalf("snapshot = %q, want world", got)
 	}
 }
 

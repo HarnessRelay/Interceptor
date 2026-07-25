@@ -159,6 +159,19 @@ func (r *Runtime) Terminate(ctx context.Context) error {
 	}
 }
 
+func (r *Runtime) Kill() error {
+	select {
+	case <-r.done:
+		return nil
+	default:
+	}
+	if err := terminateProcessGroup(r.pgid, syscall.SIGKILL); err != nil {
+		return err
+	}
+	<-r.done
+	return nil
+}
+
 func (r *Runtime) Wait() error {
 	<-r.done
 	r.waitMu.Lock()

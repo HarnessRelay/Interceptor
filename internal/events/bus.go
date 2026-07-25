@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 )
+
+const defaultHistoryLimit = 1024
 
 // SubscribeOptions controls what events a subscription receives.
 type SubscribeOptions struct {
@@ -30,9 +33,11 @@ func (s *Subscription) Close() {
 
 // Bus provides in-memory publish/subscribe for events.
 type Bus struct {
-	mu        sync.RWMutex
-	subs      map[string]*subEntry
-	sequences map[string]uint64
+	mu           sync.RWMutex
+	subs         map[string]*subEntry
+	sequences    map[string]uint64
+	history      map[string][]Event
+	historyLimit int
 }
 
 type subEntry struct {
@@ -44,8 +49,10 @@ type subEntry struct {
 // NewBus creates a new event bus.
 func NewBus() *Bus {
 	return &Bus{
-		subs:      make(map[string]*subEntry),
-		sequences: make(map[string]uint64),
+		subs:         make(map[string]*subEntry),
+		sequences:    make(map[string]uint64),
+		history:      make(map[string][]Event),
+		historyLimit: defaultHistoryLimit,
 	}
 }
 
@@ -60,7 +67,10 @@ func (b *Bus) Publish(ctx context.Context, event Event) Event {
 		event.Timestamp = time.Now()
 	}
 	if event.SessionID != "" {
-		event.Sequence = b.nextSeq(event.SessionID)
+		b.mu.Lock()
+		event.Sequence = b.nextSeqLocked(event.SessionID)
+		b.appendHistoryLocked(event)
+		b.mu.Unlock()
 	}
 	b.mu.RLock()
 	subs := make([]chan Event, 0, len(b.subs))
@@ -79,6 +89,32 @@ func (b *Bus) Publish(ctx context.Context, event Event) Event {
 		}
 	}
 	return event
+}
+
+// History returns stored events for one session with optional sequence filtering.
+func (b *Bus) History(sessionID string, afterSeq uint64, limit int) []Event {
+	if limit <= 0 || limit > b.historyLimit {
+		limit = b.historyLimit
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	events := b.history[sessionID]
+	if len(events) == 0 {
+		return nil
+	}
+	start := sort.Search(len(events), func(i int) bool {
+		return events[i].Sequence > afterSeq
+	})
+	if start >= len(events) {
+		return nil
+	}
+	events = events[start:]
+	if len(events) > limit {
+		events = events[len(events)-limit:]
+	}
+	out := make([]Event, len(events))
+	copy(out, events)
+	return out
 }
 
 // Subscribe creates a new subscription with the given options.
@@ -111,12 +147,21 @@ func (b *Bus) remove(id string) {
 	}
 }
 
-func (b *Bus) nextSeq(sessionID string) uint64 {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *Bus) nextSeqLocked(sessionID string) uint64 {
 	seq := b.sequences[sessionID] + 1
 	b.sequences[sessionID] = seq
 	return seq
+}
+
+func (b *Bus) appendHistoryLocked(event Event) {
+	if b.historyLimit <= 0 {
+		return
+	}
+	history := append(b.history[event.SessionID], event)
+	if len(history) > b.historyLimit {
+		history = history[len(history)-b.historyLimit:]
+	}
+	b.history[event.SessionID] = history
 }
 
 func (b *Bus) matchLocked(e *subEntry, event Event) bool {

@@ -235,8 +235,8 @@ Goal: launch and control terminal processes through PTYs.
 
 ## 3.2 PTY Output
 
-- [ ] Continuously read PTY output.
-- [ ] Publish output to internal event bus.
+- [x] Continuously read PTY output.
+- [x] Publish output to internal event bus.
 - [x] Preserve raw bytes.
 - [x] Handle EOF and process exit.
 - [x] Avoid goroutine leaks.
@@ -246,14 +246,14 @@ Goal: launch and control terminal processes through PTYs.
 
 - [x] Implement writing raw input to PTY.
 - [x] Implement text input.
-- [ ] Implement special key support.
-- [ ] Implement Enter, Escape, Tab, arrows, and Ctrl+C.
+- [x] Implement special key support.
+- [x] Implement Enter, Escape, Tab, arrows, and Ctrl+C.
 - [x] Add tests for input behavior.
 
 ## 3.4 Resize Support
 
 - [x] Implement PTY resize operation.
-- [ ] Add API-safe resize model.
+- [x] Add API-safe resize model.
 - [x] Add tests for resize handling.
 
 ## 3.5 Interrupt and Termination
@@ -277,7 +277,7 @@ Goal: manage multiple sessions reliably.
 - [x] Store session metadata.
 - [x] Validate command input.
 - [x] Reject invalid working directories.
-- [ ] Expose create-session API.
+- [x] Expose create-session API.
 
 ## 4.2 Session Listing and Reading
 
@@ -294,14 +294,14 @@ Goal: manage multiple sessions reliably.
 - [x] Track `failed`.
 - [x] Track `terminated`.
 - [ ] Add preliminary idle detection if simple enough.
-- [ ] Emit status change events.
+- [x] Emit status change events.
 
 ## 4.4 Session Cleanup
 
-- [ ] Define cleanup rules for exited sessions.
+- [x] Define cleanup rules for exited sessions.
 - [x] Define whether exited sessions remain visible.
-- [ ] Add manual cleanup API if needed.
-- [ ] Ensure cleanup does not delete useful audit history unexpectedly.
+- [x] Add manual cleanup API if needed.
+- [x] Ensure cleanup does not delete useful audit history unexpectedly.
 
 ---
 
@@ -328,12 +328,12 @@ Goal: stream live session events to the web dashboard.
 
 ## 5.3 WebSocket Endpoint
 
-- [ ] Implement `/api/v1/ws`.
-- [ ] Authenticate WebSocket connections.
-- [ ] Stream terminal output events.
-- [ ] Stream session lifecycle events.
-- [ ] Handle client disconnects cleanly.
-- [ ] Add tests where practical.
+- [x] Implement `/api/v1/ws`.
+- [x] Authenticate WebSocket connections.
+- [x] Stream terminal output events.
+- [x] Stream session lifecycle events.
+- [x] Handle client disconnects cleanly.
+- [x] Add tests where practical.
 
 ---
 
@@ -343,32 +343,32 @@ Goal: expose stable backend operations for the web dashboard and future clients.
 
 ## 6.1 Session APIs
 
-- [ ] Implement `GET /api/v1/sessions`.
-- [ ] Implement `POST /api/v1/sessions`.
-- [ ] Implement `GET /api/v1/sessions/{id}`.
-- [ ] Implement `DELETE /api/v1/sessions/{id}`.
+- [x] Implement `GET /api/v1/sessions`.
+- [x] Implement `POST /api/v1/sessions`.
+- [x] Implement `GET /api/v1/sessions/{id}`.
+- [x] Implement `DELETE /api/v1/sessions/{id}`.
 
 ## 6.2 Terminal Control APIs
 
-- [ ] Implement `POST /api/v1/sessions/{id}/input`.
-- [ ] Implement `POST /api/v1/sessions/{id}/resize`.
-- [ ] Implement `POST /api/v1/sessions/{id}/interrupt`.
-- [ ] Implement `POST /api/v1/sessions/{id}/terminate`.
+- [x] Implement `POST /api/v1/sessions/{id}/input`.
+- [x] Implement `POST /api/v1/sessions/{id}/resize`.
+- [x] Implement `POST /api/v1/sessions/{id}/interrupt`.
+- [x] Implement `POST /api/v1/sessions/{id}/terminate`.
 
 ## 6.3 Snapshot and Events APIs
 
-- [ ] Implement `GET /api/v1/sessions/{id}/snapshot`.
-- [ ] Implement `GET /api/v1/sessions/{id}/events`.
-- [ ] Add pagination or limits for event history.
-- [ ] Add tests for event retrieval.
+- [x] Implement `GET /api/v1/sessions/{id}/snapshot`.
+- [x] Implement `GET /api/v1/sessions/{id}/events`.
+- [x] Add pagination or limits for event history.
+- [x] Add tests for event retrieval.
 
 ## 6.4 Semantic Action API
 
-- [ ] Implement `POST /api/v1/sessions/{id}/actions/{action_id}`.
-- [ ] Require `event_id` for event-bound actions.
-- [ ] Reject stale or unknown actions.
-- [ ] Return clear action result.
-- [ ] Add tests for stale action rejection.
+- [x] Implement `POST /api/v1/sessions/{id}/actions/{action_id}`.
+- [x] Require `event_id` for event-bound actions.
+- [x] Reject stale or unknown actions.
+- [x] Return clear action result.
+- [x] Add tests for stale action rejection.
 
 ---
 
@@ -395,19 +395,19 @@ Goal: persist enough information for session history, reconnects, debugging, and
 
 ## 7.3 Terminal History
 
-- [ ] Store bounded terminal output history.
-- [ ] Define truncation behavior.
-- [ ] Avoid unbounded database growth.
-- [ ] Add tests for history limits.
+- [x] Store bounded terminal output history.
+- [x] Define truncation behavior.
+- [x] Avoid unbounded database growth.
+- [x] Add tests for history limits.
 
 ## 7.4 Audit Logging
 
-- [ ] Audit session creation.
-- [ ] Audit input submission where appropriate.
-- [ ] Audit interrupts.
-- [ ] Audit termination.
-- [ ] Audit semantic actions.
-- [ ] Do not log secrets or full sensitive prompts by default unless explicitly configured.
+- [x] Audit session creation.
+- [x] Audit input submission where appropriate.
+- [x] Audit interrupts.
+- [x] Audit termination.
+- [x] Audit semantic actions.
+- [x] Do not log secrets or full sensitive prompts by default unless explicitly configured.
 
 ---
 
@@ -417,31 +417,31 @@ Goal: make every terminal-based harness usable even without a dedicated adapter.
 
 ## 8.1 Adapter Registry
 
-- [ ] Define adapter interface.
-- [ ] Define adapter match result.
-- [ ] Implement adapter registry.
-- [ ] Ensure generic adapter is always available.
-- [ ] Ensure generic adapter has lowest priority.
-- [ ] Add tests for adapter selection.
+- [x] Define adapter interface.
+- [x] Define adapter match result.
+- [x] Implement adapter registry.
+- [x] Ensure generic adapter is always available.
+- [x] Ensure generic adapter has lowest priority.
+- [x] Add tests for adapter selection.
 
 ## 8.2 Generic Adapter Features
 
-- [ ] Support raw terminal passthrough.
-- [ ] Support text input.
-- [ ] Support special keys.
-- [ ] Support interrupt.
-- [ ] Support terminate.
-- [ ] Support resize.
-- [ ] Emit generic session events.
-- [ ] Add tests for generic fallback behavior.
+- [x] Support raw terminal passthrough.
+- [x] Support text input.
+- [x] Support special keys.
+- [x] Support interrupt.
+- [x] Support terminate.
+- [x] Support resize.
+- [x] Emit generic session events.
+- [x] Add tests for generic fallback behavior.
 
 ## 8.3 Basic Heuristics
 
-- [ ] Add optional visible-text or regex detection for approval-like prompts.
-- [ ] Mark heuristic events with confidence.
-- [ ] Avoid treating heuristic events as guaranteed.
-- [ ] Always provide raw terminal fallback.
-- [ ] Add tests for heuristic detection.
+- [x] Add optional visible-text or regex detection for approval-like prompts.
+- [x] Mark heuristic events with confidence.
+- [x] Avoid treating heuristic events as guaranteed.
+- [x] Always provide raw terminal fallback.
+- [x] Add tests for heuristic detection.
 
 ---
 
@@ -451,26 +451,26 @@ Goal: support reconnects and non-streaming views.
 
 ## 9.1 Snapshot Model
 
-- [ ] Define terminal snapshot response.
-- [ ] Include dimensions.
-- [ ] Include visible content.
+- [x] Define terminal snapshot response.
+- [x] Include dimensions.
+- [x] Include visible content.
 - [ ] Include cursor position if available.
-- [ ] Include sequence number.
-- [ ] Include timestamp.
+- [x] Include sequence number.
+- [x] Include timestamp.
 
 ## 9.2 Snapshot Generation
 
 - [ ] Build basic screen state from output or use frontend-side replay strategy.
-- [ ] Decide minimum viable Stage 1 snapshot strategy.
-- [ ] Implement snapshot endpoint.
-- [ ] Add tests for snapshot behavior.
+- [x] Decide minimum viable Stage 1 snapshot strategy.
+- [x] Implement snapshot endpoint.
+- [x] Add tests for snapshot behavior.
 
 ## 9.3 Reconnect Behavior
 
-- [ ] When web client reconnects, load session metadata.
-- [ ] Load recent terminal history or snapshot.
-- [ ] Resume live event stream.
-- [ ] Verify reconnect manually.
+- [x] When web client reconnects, load session metadata.
+- [x] Load recent terminal history or snapshot.
+- [x] Resume live event stream.
+- [x] Verify reconnect manually.
 
 ---
 
@@ -480,45 +480,45 @@ Goal: create a usable browser dashboard for Stage 1 validation.
 
 ## 10.1 Layout
 
-- [ ] Create session list page/panel.
-- [ ] Create active session view.
-- [ ] Create terminal area.
-- [ ] Create session status indicator.
-- [ ] Create action/controls area.
-- [ ] Create event/history panel if useful.
+- [x] Create session list page/panel.
+- [x] Create active session view.
+- [x] Create terminal area.
+- [x] Create session status indicator.
+- [x] Create action/controls area.
+- [x] Create event/history panel if useful.
 
 ## 10.2 Session Creation UI
 
-- [ ] Add create-session form.
-- [ ] Support command input.
-- [ ] Support working directory input.
-- [ ] Support session name input.
-- [ ] Show validation errors.
+- [x] Add create-session form.
+- [x] Support command input.
+- [x] Support working directory input.
+- [x] Support session name input.
+- [x] Show validation errors.
 
 ## 10.3 Terminal UI
 
-- [ ] Render live terminal output.
-- [ ] Send keyboard input.
-- [ ] Send pasted text safely.
-- [ ] Handle terminal resize.
-- [ ] Support reconnect.
-- [ ] Support focus/keyboard capture correctly.
+- [x] Render live terminal output.
+- [x] Send keyboard input.
+- [x] Send pasted text safely.
+- [x] Handle terminal resize.
+- [x] Support reconnect.
+- [x] Support focus/keyboard capture correctly.
 
 ## 10.4 Controls
 
-- [ ] Add Interrupt button.
-- [ ] Add Terminate button.
-- [ ] Add Force Kill option behind confirmation.
-- [ ] Add raw input fallback if terminal focus fails.
-- [ ] Display current working directory and command.
+- [x] Add Interrupt button.
+- [x] Add Terminate button.
+- [x] Add Force Kill option behind confirmation.
+- [x] Add raw input fallback if terminal focus fails.
+- [x] Display current working directory and command.
 
 ## 10.5 Semantic Events UI
 
-- [ ] Render backend-provided semantic events.
-- [ ] Render backend-provided action buttons.
-- [ ] Submit action by event ID and action ID.
-- [ ] Show action success/failure.
-- [ ] Fall back to raw terminal when semantic event is uncertain.
+- [x] Render backend-provided semantic events.
+- [x] Render backend-provided action buttons.
+- [x] Submit action by event ID and action ID.
+- [x] Show action success/failure.
+- [x] Fall back to raw terminal when semantic event is uncertain.
 
 ---
 
@@ -528,39 +528,39 @@ Goal: prevent accidental dangerous exposure and unsafe control.
 
 ## 11.1 Authentication
 
-- [ ] Implement authentication for dashboard and API.
-- [ ] Do not allow unauthenticated session control.
-- [ ] Protect WebSocket authentication.
-- [ ] Add tests for unauthorized access.
+- [x] Implement authentication for dashboard and API.
+- [x] Do not allow unauthenticated session control.
+- [x] Protect WebSocket authentication.
+- [x] Add tests for unauthorized access.
 
 ## 11.2 Network Defaults
 
-- [ ] Bind to `127.0.0.1` by default.
-- [ ] Require explicit config for non-local bind.
-- [ ] Log warning when binding outside localhost.
-- [ ] Document safe remote access options.
+- [x] Bind to `127.0.0.1` by default.
+- [x] Require explicit config for non-local bind.
+- [x] Log warning when binding outside localhost.
+- [x] Document safe remote access options.
 
 ## 11.3 CSRF and Origin Controls
 
-- [ ] Add CSRF protection where needed.
-- [ ] Validate browser origins.
-- [ ] Reject unexpected origins by default.
-- [ ] Add tests for origin rejection where practical.
+- [x] Add CSRF protection where needed.
+- [x] Validate browser origins.
+- [x] Reject unexpected origins by default.
+- [x] Add tests for origin rejection where practical.
 
 ## 11.4 Action Safety
 
-- [ ] Require confirmation for terminate.
-- [ ] Require stronger confirmation for force kill.
-- [ ] Reject stale semantic actions.
-- [ ] Show command/session context before approval actions.
-- [ ] Never auto-approve by default.
+- [x] Require confirmation for terminate.
+- [x] Require stronger confirmation for force kill.
+- [x] Reject stale semantic actions.
+- [x] Show command/session context before approval actions.
+- [x] Never auto-approve by default.
 
 ## 11.5 Sensitive Data Protection
 
-- [ ] Review logs for secret leakage.
-- [ ] Review database contents for sensitive data.
-- [ ] Add redaction helper where needed.
-- [ ] Document known sensitive areas.
+- [x] Review logs for secret leakage.
+- [x] Review database contents for sensitive data.
+- [x] Add redaction helper where needed.
+- [x] Document known sensitive areas.
 
 ---
 
@@ -570,11 +570,11 @@ Goal: prove the adapter architecture with one real harness after the generic run
 
 ## 12.1 Adapter Target Selection
 
-- [ ] Choose first real harness adapter.
-- [ ] Record why it was selected.
-- [ ] Record its common approval prompt patterns.
-- [ ] Record its command palette behavior.
-- [ ] Record its interrupt behavior.
+- [x] Choose first real harness adapter.
+- [x] Record why it was selected.
+- [x] Record its common approval prompt patterns.
+- [x] Record its command palette behavior.
+- [x] Record its interrupt behavior.
 
 ## 12.2 Detection
 
@@ -611,21 +611,21 @@ Goal: provide a terminal client for local control and debugging.
 
 ## 13.1 Basic CLI
 
-- [ ] Implement `harnessctl status`.
-- [ ] Implement `harnessctl sessions`.
-- [ ] Implement `harnessctl run`.
-- [ ] Implement `harnessctl interrupt`.
-- [ ] Implement `harnessctl terminate`.
+- [x] Implement `harnessctl status`.
+- [x] Implement `harnessctl sessions`.
+- [x] Implement `harnessctl run`.
+- [x] Implement `harnessctl interrupt`.
+- [x] Implement `harnessctl terminate`.
 
 ## 13.2 Attach Mode
 
-- [ ] Implement `harnessctl attach <session-id>`.
-- [ ] Put local terminal into raw mode.
-- [ ] Forward keyboard input to daemon.
-- [ ] Render remote PTY output.
-- [ ] Handle local terminal resize.
-- [ ] Support detach key sequence.
-- [ ] Restore local terminal state on exit.
+- [x] Implement `harnessctl attach <session-id>`.
+- [x] Put local terminal into raw mode.
+- [x] Forward keyboard input to daemon.
+- [x] Render remote PTY output.
+- [x] Handle local terminal resize.
+- [x] Support detach key sequence.
+- [x] Restore local terminal state on exit.
 
 ---
 
@@ -635,36 +635,36 @@ Goal: make the project easy for smaller AI agents and humans to continue.
 
 ## 14.1 README
 
-- [ ] Document project purpose.
-- [ ] Document Stage 1 scope.
-- [ ] Document out-of-scope items.
-- [ ] Document architecture.
-- [ ] Document quick start.
-- [ ] Document security warnings.
+- [x] Document project purpose.
+- [x] Document Stage 1 scope.
+- [x] Document out-of-scope items.
+- [x] Document architecture.
+- [x] Document quick start.
+- [x] Document security warnings.
 
 ## 14.2 Developer Guide
 
-- [ ] Document project structure.
-- [ ] Document how to run tests.
-- [ ] Document how to run fake harnesses.
-- [ ] Document how to add an adapter.
-- [ ] Document API conventions.
-- [ ] Document event schema.
+- [x] Document project structure.
+- [x] Document how to run tests.
+- [x] Document how to run fake harnesses.
+- [x] Document how to add an adapter.
+- [x] Document API conventions.
+- [x] Document event schema.
 
 ## 14.3 API Documentation
 
-- [ ] Document REST endpoints.
-- [ ] Document WebSocket events.
-- [ ] Document action model.
-- [ ] Document error responses.
-- [ ] Document authentication behavior.
+- [x] Document REST endpoints.
+- [x] Document WebSocket events.
+- [x] Document action model.
+- [x] Document error responses.
+- [x] Document authentication behavior.
 
 ## 14.4 Context/Todo Maintenance
 
-- [ ] Verify `Context.md` is still accurate.
-- [ ] Propose any needed context updates to the project owner.
-- [ ] Do not apply context updates without approval.
-- [ ] Keep `Todo.md` aligned with completed work.
+- [x] Verify `Context.md` is still accurate.
+- [x] Propose any needed context updates to the project owner.
+- [x] Do not apply context updates without approval.
+- [x] Keep `Todo.md` aligned with completed work.
 
 ---
 
@@ -674,20 +674,20 @@ Goal: verify that the interceptor + web dashboard is useful and stable enough to
 
 ## 15.1 Generic Command Validation
 
-- [ ] Run `/bin/bash` through interceptor.
-- [ ] Run simple commands.
-- [ ] Run long-running command.
-- [ ] Run interactive command.
-- [ ] Verify output, input, resize, interrupt, and terminate.
+- [x] Run `/bin/bash` through interceptor.
+- [x] Run simple commands.
+- [x] Run long-running command.
+- [x] Run interactive command.
+- [x] Verify output, input, resize, interrupt, and terminate.
 
 ## 15.2 Fake Harness Validation
 
-- [ ] Run fake plain-output harness.
-- [ ] Run fake approval harness.
-- [ ] Run fake full-screen TUI harness.
-- [ ] Run fake long-running harness.
-- [ ] Run fake stubborn process.
-- [ ] Verify expected behavior.
+- [x] Run fake plain-output harness.
+- [x] Run fake approval harness.
+- [x] Run fake full-screen TUI harness.
+- [x] Run fake long-running harness.
+- [x] Run fake stubborn process.
+- [x] Verify expected behavior.
 
 ## 15.3 Real Harness Validation
 
@@ -701,27 +701,27 @@ Goal: verify that the interceptor + web dashboard is useful and stable enough to
 
 ## 15.4 Security Validation
 
-- [ ] Verify daemon binds to localhost by default.
-- [ ] Verify unauthenticated API calls fail.
-- [ ] Verify WebSocket auth is required.
-- [ ] Verify stale actions fail.
-- [ ] Verify logs do not expose obvious secrets.
-- [ ] Verify non-local bind requires explicit config.
+- [x] Verify daemon binds to localhost by default.
+- [x] Verify unauthenticated API calls fail.
+- [x] Verify WebSocket auth is required.
+- [x] Verify stale actions fail.
+- [x] Verify logs do not expose obvious secrets.
+- [x] Verify non-local bind requires explicit config.
 
 ## 15.5 Stage 1 Completion Criteria
 
-- [ ] Go daemon can launch PTY sessions.
-- [ ] Web dashboard can view and control sessions.
-- [ ] Multiple sessions work.
-- [ ] Generic terminal fallback works.
-- [ ] Common API is usable by the web dashboard.
-- [ ] WebSocket live streaming works.
-- [ ] Sessions can be interrupted and terminated.
-- [ ] Basic storage/audit history exists.
-- [ ] Generic adapter exists.
-- [ ] At least one real harness adapter is proven or clearly planned.
-- [ ] Tests cover core runtime and API.
-- [ ] Documentation is sufficient for handoff to smaller agents.
+- [x] Go daemon can launch PTY sessions.
+- [x] Web dashboard can view and control sessions.
+- [x] Multiple sessions work.
+- [x] Generic terminal fallback works.
+- [x] Common API is usable by the web dashboard.
+- [x] WebSocket live streaming works.
+- [x] Sessions can be interrupted and terminated.
+- [x] Basic storage/audit history exists.
+- [x] Generic adapter exists.
+- [x] At least one real harness adapter is proven or clearly planned.
+- [x] Tests cover core runtime and API.
+- [x] Documentation is sufficient for handoff to smaller agents.
 
 ---
 

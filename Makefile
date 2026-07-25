@@ -1,6 +1,7 @@
 .PHONY: build fmt run test
 
 build:
+	npm --prefix web run build
 	go build -o bin/harnessd ./cmd/harnessd
 	go build -o bin/harnessctl ./cmd/harnessctl
 
@@ -12,4 +13,3 @@ run:
 
 test:
 	go test ./...
-

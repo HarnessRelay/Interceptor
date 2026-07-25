@@ -7,14 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness/generic"
 	"github.com/harnessrelay/interceptor/internal/pty"
 )
 
-const defaultOutputBufferSize = 64 * 1024
+const defaultOutputBufferSize = 4 * 1024 * 1024
 
 // Status represents the lifecycle state of a session.
 type Status string
@@ -38,6 +40,28 @@ type CreateOptions struct {
 	Cols    uint16
 }
 
+// TerminalSize describes a session terminal's character dimensions.
+type TerminalSize struct {
+	Rows uint16
+	Cols uint16
+}
+
+// Info is a point-in-time, race-safe session metadata snapshot.
+type Info struct {
+	ID        string
+	Name      string
+	Command   string
+	Args      []string
+	WorkDir   string
+	Status    Status
+	PID       int
+	PGID      int
+	Terminal  TerminalSize
+	StartedAt time.Time
+	ExitedAt  *time.Time
+	ExitCode  *int
+}
+
 // Session holds metadata and runtime state for one session.
 type Session struct {
 	ID        string
@@ -48,14 +72,17 @@ type Session struct {
 	Status    Status
 	PID       int
 	PGID      int
+	Rows      uint16
+	Cols      uint16
 	StartedAt time.Time
 	ExitedAt  *time.Time
 	ExitCode  *int
 
-	runtime *pty.Runtime
-	buf     *outputBuffer
-	done    chan struct{}
-	mu      sync.RWMutex
+	runtime                  *pty.Runtime
+	buf                      *outputBuffer
+	done                     chan struct{}
+	mu                       sync.RWMutex
+	heuristicApprovalEmitted bool
 
 	publish func(typ events.Type, data any)
 }
@@ -80,6 +107,38 @@ func (s *Session) Subscribe() <-chan OutputChunk {
 // Snapshot returns a copy of the current output buffer contents.
 func (s *Session) Snapshot() []byte {
 	return s.buf.snapshot()
+}
+
+// Info returns a point-in-time metadata snapshot for this session.
+func (s *Session) Info() Info {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	args := make([]string, len(s.Args))
+	copy(args, s.Args)
+	var exitedAt *time.Time
+	if s.ExitedAt != nil {
+		t := *s.ExitedAt
+		exitedAt = &t
+	}
+	var exitCode *int
+	if s.ExitCode != nil {
+		code := *s.ExitCode
+		exitCode = &code
+	}
+	return Info{
+		ID:        s.ID,
+		Name:      s.Name,
+		Command:   s.Command,
+		Args:      args,
+		WorkDir:   s.WorkDir,
+		Status:    s.Status,
+		PID:       s.PID,
+		PGID:      s.PGID,
+		Terminal:  TerminalSize{Rows: s.Rows, Cols: s.Cols},
+		StartedAt: s.StartedAt,
+		ExitedAt:  exitedAt,
+		ExitCode:  exitCode,
+	}
 }
 
 // Manager manages the lifecycle of multiple sessions.
@@ -113,6 +172,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	if opts.Command == "" {
 		return nil, errors.New("session: command is required")
 	}
+	rows, cols := normalizedTerminalSize(opts.Rows, opts.Cols)
 
 	id, err := generateID()
 	if err != nil {
@@ -124,8 +184,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		Args:    opts.Args,
 		WorkDir: opts.WorkDir,
 		Env:     opts.Env,
-		Rows:    int(opts.Rows),
-		Cols:    int(opts.Cols),
+		Rows:    int(rows),
+		Cols:    int(cols),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("session: start: %w", err)
@@ -145,6 +205,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		Status:    StatusStarting,
 		PID:       r.PID(),
 		PGID:      r.PGID(),
+		Rows:      rows,
+		Cols:      cols,
 		StartedAt: time.Now(),
 		runtime:   r,
 		buf:       newOutputBuffer(defaultOutputBufferSize),
@@ -182,6 +244,9 @@ func (m *Manager) List() []*Session {
 	for _, s := range m.sessions {
 		sessions = append(sessions, s)
 	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].StartedAt.After(sessions[j].StartedAt)
+	})
 	return sessions
 }
 
@@ -217,7 +282,18 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 	if !ok {
 		return fmt.Errorf("session: unknown session %q", id)
 	}
-	return s.runtime.Resize(int(rows), int(cols))
+	st := s.status()
+	s.mu.Lock()
+	s.Rows = rows
+	s.Cols = cols
+	s.mu.Unlock()
+	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
+		return nil
+	}
+	if err := s.runtime.Resize(int(rows), int(cols)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Interrupt sends an interrupt signal (Ctrl+C) to a session.
@@ -253,6 +329,41 @@ func (m *Manager) Terminate(ctx context.Context, id string) error {
 	return nil
 }
 
+// Kill forcefully stops a session process group.
+func (m *Manager) Kill(id string) error {
+	m.mu.RLock()
+	s, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session: unknown session %q", id)
+	}
+	st := s.status()
+	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
+		return fmt.Errorf("session: session %q is %s", id, st)
+	}
+	return s.runtime.Kill()
+}
+
+// Cleanup removes a completed session from the manager. Running sessions must
+// be interrupted, terminated, or killed before cleanup so output history is not
+// lost unexpectedly.
+func (m *Manager) Cleanup(id string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session: unknown session %q", id)
+	}
+	st := s.status()
+	if st != StatusExited && st != StatusFailed && st != StatusTerminated {
+		m.mu.Unlock()
+		return fmt.Errorf("session: session %q is %s", id, st)
+	}
+	delete(m.sessions, id)
+	m.mu.Unlock()
+	return nil
+}
+
 func (s *Session) status() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -282,12 +393,40 @@ func (s *Session) readOutput() {
 				data := make([]byte, n)
 				copy(data, buf[:n])
 				s.publish(events.TypeTerminalOutput, events.TerminalOutput{Data: data})
+				s.detectHeuristicEvents()
 			}
 		}
 		if err != nil {
 			s.buf.Close()
 			return
 		}
+	}
+}
+
+func (s *Session) detectHeuristicEvents() {
+	s.mu.Lock()
+	if s.heuristicApprovalEmitted {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	snapshot := string(s.Snapshot())
+	event, ok := generic.DetectApproval(snapshot, s.Command, s.WorkDir)
+	if !ok {
+		return
+	}
+
+	s.mu.Lock()
+	if s.heuristicApprovalEmitted {
+		s.mu.Unlock()
+		return
+	}
+	s.heuristicApprovalEmitted = true
+	s.mu.Unlock()
+
+	if s.publish != nil {
+		s.publish(event.Type, event.Data)
 	}
 }
 
@@ -476,4 +615,11 @@ func cloneBytes(b []byte) []byte {
 	c := make([]byte, len(b))
 	copy(c, b)
 	return c
+}
+
+func normalizedTerminalSize(rows, cols uint16) (uint16, uint16) {
+	if rows == 0 && cols == 0 {
+		return 24, 80
+	}
+	return rows, cols
 }

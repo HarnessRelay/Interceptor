@@ -1,2 +1,2 @@
-// Package harness will define adapter interfaces for terminal-based coding harnesses.
+// Package harness defines adapter interfaces and selection for terminal-based coding harnesses.
 package harness
