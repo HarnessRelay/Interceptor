@@ -46,6 +46,10 @@ export const api = {
       body: JSON.stringify({ mode: "raw", encoding: "base64", data: encodeBase64(bytes) })
     });
   },
+  async sendPrompt(id: string, text: string): Promise<void> {
+    await this.input(id, text);
+    await this.key(id, "Enter");
+  },
   async key(id: string, key: string): Promise<void> {
     await request(`/api/v1/sessions/${id}/input`, {
       method: "POST",

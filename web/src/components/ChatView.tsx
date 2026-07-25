@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { EventEnvelope, Session } from "../types";
-import { cleanTerminalText, decodeBase64, isLive, terminalOutputText } from "../utils";
+import { decodeBase64, isLive, projectTerminalOutputForChat, terminalOutputText } from "../utils";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 
 type ChatMessage = {
@@ -10,6 +10,8 @@ type ChatMessage = {
   text: string;
   ts: string;
 };
+
+const terminalStatusMessageID = "terminal-output-status";
 
 export function ChatView({
   session,
@@ -40,9 +42,9 @@ export function ChatView({
     api.snapshot(session.id)
       .then((snapshot) => {
         latestSeq.current = snapshot.latest_seq || 0;
-        const text = cleanTerminalText(snapshot.chunks.map((chunk) => decodeBase64(chunk.bytes)).join(""));
-        if (text) {
-          setMessages([{ id: "snapshot", role: "assistant", text, ts: new Date().toISOString() }]);
+        const projection = projectTerminalOutputForChat(snapshot.chunks.map((chunk) => decodeBase64(chunk.bytes)).join(""));
+        if (projection.text) {
+          setMessages([{ id: projection.kind === "terminal" ? terminalStatusMessageID : "snapshot", role: projection.kind === "terminal" ? "system" : "assistant", text: projection.text, ts: new Date().toISOString() }]);
         } else {
           setMessages([{ id: "empty", role: "system", text: "No readable output yet. The raw terminal remains available as the source of truth.", ts: new Date().toISOString() }]);
         }
@@ -81,28 +83,43 @@ export function ChatView({
   );
 
   function appendAssistantOutput(event: EventEnvelope) {
-    const text = cleanTerminalText(terminalOutputText(event.data));
-    if (!text) return;
+    const projection = projectTerminalOutputForChat(terminalOutputText(event.data));
+    if (!projection.text) return;
     setMessages((current) => {
+      if (projection.kind === "terminal") {
+        if (current.some((message) => message.id === terminalStatusMessageID)) return current;
+        const withoutEmpty = current.filter((message) => message.id !== "empty");
+        return [...withoutEmpty, { id: terminalStatusMessageID, role: "system", text: projection.text, ts: event.ts }];
+      }
       const last = current[current.length - 1];
       if (last?.role === "assistant" && last.id !== "snapshot") {
-        return [...current.slice(0, -1), { ...last, text: [last.text, text].filter(Boolean).join("\n") }];
+        return [...current.slice(0, -1), { ...last, text: [last.text, projection.text].filter(Boolean).join("\n") }];
       }
-      return [...current, { id: event.id, role: "assistant", text, ts: event.ts }];
+      return [...current, { id: event.id, role: "assistant", text: projection.text, ts: event.ts }];
     });
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    await sendPrompt();
+  }
+
+  async function sendPrompt() {
     const value = prompt.trim();
     if (!value || !isLive(session.status)) return;
     setPrompt("");
     setMessages((current) => [...current, { id: `user-${Date.now()}`, role: "user", text: value, ts: new Date().toISOString() }]);
     try {
-      await api.input(session.id, `${value}\n`);
+      await api.sendPrompt(session.id, value);
     } catch (err) {
       onError((err as Error).message);
     }
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    void sendPrompt();
   }
 
   async function runAction(action: string) {
@@ -126,8 +143,8 @@ export function ChatView({
       if (action === "clear") setMessages([]);
       if (action === "snapshot") {
         const snapshot = await api.snapshot(session.id);
-        const text = cleanTerminalText(snapshot.chunks.map((chunk) => decodeBase64(chunk.bytes)).join(""));
-        setMessages(text ? [{ id: `snapshot-${Date.now()}`, role: "assistant", text, ts: new Date().toISOString() }] : []);
+        const projection = projectTerminalOutputForChat(snapshot.chunks.map((chunk) => decodeBase64(chunk.bytes)).join(""));
+        setMessages(projection.text ? [{ id: projection.kind === "terminal" ? terminalStatusMessageID : `snapshot-${Date.now()}`, role: projection.kind === "terminal" ? "system" : "assistant", text: projection.text, ts: new Date().toISOString() }] : []);
       }
       await onSessionUpdate();
     } catch (err) {
@@ -170,7 +187,7 @@ export function ChatView({
           </button>
           <SlashCommandMenu open={slashOpen} onAction={runAction} />
         </div>
-        <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Send input to the harness" disabled={!isLive(session.status)} />
+        <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} placeholder="Send input to the harness" disabled={!isLive(session.status)} />
         <button className="primary-button" disabled={!isLive(session.status) || prompt.trim() === ""}>Send</button>
       </form>
     </section>

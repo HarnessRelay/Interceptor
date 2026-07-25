@@ -536,6 +536,14 @@ Goal: create a usable browser dashboard for Stage 1 validation.
 - [x] Document logo asset placement.
 - [x] Extend dashboard smoke coverage for Chat Mode, Terminal Mode, switching, reconnect, interrupt, and terminate.
 
+## 10.7 Browser QA Pass
+
+- [x] Verify browser automation capability and document it in `Docs/QA/WebApp-QA.md`.
+- [x] Run screen-by-screen dashboard QA for login, app shell/sidebar, create session, Chat Mode, slash menu, Terminal Mode, reconnect/reload, and multiple sessions.
+- [x] Add QA IDs to dashboard smoke coverage.
+- [x] Run approved real-harness smoke with OpenCode in a disposable `/tmp` fixture.
+- [x] Re-run `go test ./...`, `make test`, `make build`, and dashboard smoke commands after QA updates.
+
 ---
 
 # Phase 11 — Security Hardening

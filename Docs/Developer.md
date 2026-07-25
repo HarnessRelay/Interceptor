@@ -46,12 +46,24 @@ HARNESSRELAY_TOKEN=dashboard-token node qa/dashboard-smoke.mjs
 
 The smoke logs in, creates a Chat Mode shell session, sends a prompt through the composer, switches to Terminal Mode, sends raw terminal input, switches back to Chat Mode, reloads to verify reconnect/snapshot behavior, creates a Terminal Mode session, and exercises interrupt/terminate controls.
 
+The active browser QA log lives at `Docs/QA/WebApp-QA.md`. Each regression covered by the smoke is labeled with its QA ID in `qa/dashboard-smoke.mjs`.
+
+An optional real-harness smoke path is available only when explicitly approved:
+
+```bash
+HARNESSRELAY_TOKEN=dashboard-token HARNESSRELAY_REAL_HARNESS_SMOKE=opencode node qa/dashboard-smoke.mjs
+```
+
+That path launches `opencode` in `/tmp/harnessrelay-qa-opencode`, sends the documented harmless prompt, interrupts, and terminates it. Do not run a real-harness smoke without explicit approval because coding harnesses may perform external network calls.
+
 ## Fake Harnesses
 
 Use fake harnesses instead of real coding tools for automated tests:
 
 - `plain-output.sh`: stdout/stderr and exit
 - `interactive-echo.sh`: prompt and input echo
+- `ready-received.sh`: deterministic Chat Mode submit/Enter regression fixture
+- `noisy-tui-artifact.sh`: repeated-character and redraw artifact fixture for Chat Mode filtering
 - `long-running.sh`: heartbeat and Ctrl+C behavior
 - `ignore-term.sh`: SIGTERM escalation behavior
 - `resize-aware.sh`: terminal size observation

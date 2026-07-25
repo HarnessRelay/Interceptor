@@ -45,6 +45,13 @@ button:disabled {
   opacity: 0.48;
 }
 
+.primary-button:disabled {
+  border-color: var(--border);
+  background: var(--surface-strong);
+  color: var(--text-muted);
+  opacity: 1;
+}
+
 input,
 textarea {
   width: 100%;

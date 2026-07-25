@@ -103,6 +103,8 @@ HARNESSRELAY_TOKEN=dashboard-token node qa/dashboard-smoke.mjs
 
 The smoke logs in, creates sessions in Chat Mode and Terminal Mode, sends prompt/input through both views, switches between modes, verifies reconnect snapshots, and exercises interrupt/terminate controls.
 
+The QA log is `Docs/QA/WebApp-QA.md`. The optional real-harness smoke is gated behind `HARNESSRELAY_REAL_HARNESS_SMOKE=opencode` and should only be run with explicit approval because it launches a coding harness.
+
 ## Security
 
 The daemon controls local terminal sessions. Treat access as local command-control access.

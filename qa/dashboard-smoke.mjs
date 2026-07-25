@@ -6,6 +6,13 @@ const terminalSessionName = `dash-terminal-${Date.now()}`;
 const chatLine = `chat smoke ${Date.now()}`;
 const terminalLine = `terminal smoke ${Date.now()}`;
 const terminalModeLine = `terminal mode ${Date.now()}`;
+const runCodexSmoke = process.env.HARNESSRELAY_CODEX_SMOKE === "1";
+const realHarnessSmoke = process.env.HARNESSRELAY_REAL_HARNESS_SMOKE || (runCodexSmoke ? "codex" : "");
+const codexSessionName = `dash-codex-${Date.now()}`;
+const codexCwd = "/tmp/harnessrelay-qa-codex";
+const opencodeSessionName = `dash-opencode-${Date.now()}`;
+const opencodeCwd = "/tmp/harnessrelay-qa-opencode";
+const codexPrompt = "Summarize this tiny test repository. Do not edit files and do not run destructive commands.";
 
 const pages = await getJSON(cdpURL);
 const page = pages.find((entry) => entry.type === "page");
@@ -33,7 +40,7 @@ await delay(500);
 const result = await cdp.send("Runtime.evaluate", {
   awaitPromise: true,
   returnByValue: true,
-  expression: `(${dashboardSmoke})(${JSON.stringify({ token, chatSessionName, terminalSessionName, chatLine, terminalLine, terminalModeLine })})`
+  expression: `(${dashboardSmoke})(${JSON.stringify({ token, chatSessionName, terminalSessionName, chatLine, terminalLine, terminalModeLine, realHarnessSmoke, codexSessionName, codexCwd, opencodeSessionName, opencodeCwd, codexPrompt })})`
 });
 
 const value = result.result.value;
@@ -56,6 +63,9 @@ if (!reconnect.result.value?.ok) {
 console.log("dashboard smoke passed");
 console.log(value.chatSnapshot);
 console.log(value.terminalModeSnapshot);
+if (value.realHarnessSmoke && !value.realHarnessSmoke.skipped) {
+  console.log(`real harness smoke passed: ${value.realHarnessSmoke.command}`);
+}
 await cdp.close();
 
 async function dashboardSmoke(input) {
@@ -87,27 +97,30 @@ async function dashboardSmoke(input) {
     const snapshot = await fetch("/api/v1/sessions/" + session.id + "/snapshot", { credentials: "same-origin" }).then((response) => response.json());
     return snapshot.chunks.map((chunk) => atob(chunk.bytes)).join("");
   };
-  const createSession = async (nameValue, mode) => {
+  const createSession = async (nameValue, mode, overrides = {}) => {
     const form = document.querySelector(".create-form");
     const [name, command, args, cwd] = [...form.querySelectorAll("input")];
     setValue(name, nameValue);
-    setValue(command, "/bin/sh");
-    setValue(args, "");
-    setValue(cwd, "");
+    setValue(command, overrides.command || "/bin/sh");
+    setValue(args, overrides.args || "");
+    setValue(cwd, overrides.cwd || "");
     clickText(mode === "terminal" ? "Terminal" : "Chat", form);
     await delay(100);
     form.requestSubmit();
   };
 
   try {
+    // QA-001: login accepts the configured token and enters the authenticated dashboard.
     const password = document.querySelector(".login-panel input[type=password]");
     if (password) {
       setValue(password, input.token);
       document.querySelector(".login-panel").requestSubmit();
     }
 
+    // QA-002: app shell/sidebar exposes the create-session form after auth.
     await waitFor(() => document.querySelector(".create-form"), "dashboard");
 
+    // QA-003 and QA-004: create a Chat Mode session and verify composer output.
     await createSession(input.chatSessionName, "chat");
     await waitFor(() => document.querySelector(".chat-view .composer textarea"), "chat composer");
     setValue(document.querySelector(".chat-view .composer textarea"), "echo chat:" + input.chatLine);
@@ -120,11 +133,13 @@ async function dashboardSmoke(input) {
     if (!document.body.innerText.includes("chat:" + input.chatLine)) {
       throw new Error("chat transcript did not show command output");
     }
+    // QA-005: slash menu opens and action selection closes it.
     clickText("/", document.querySelector(".composer"));
     await waitFor(() => document.querySelector(".slash-menu"), "slash menu");
     clickText("Refresh snapshot", document.querySelector(".slash-menu"));
     await waitFor(() => !document.querySelector(".slash-menu"), "slash menu closed");
 
+    // QA-006: switching to Terminal Mode keeps the same PTY session usable.
     clickText("Open Terminal");
     await waitFor(() => document.querySelector(".terminal-section .raw-input textarea"), "terminal mode");
     if (!document.querySelector(".xterm-rows")) throw new Error("xterm rows missing after mode switch");
@@ -139,6 +154,7 @@ async function dashboardSmoke(input) {
     clickText("Open Chat");
     await waitFor(() => document.querySelector(".chat-view"), "chat mode restored");
 
+    // QA-008: a second session keeps separate output and can be interrupted/terminated.
     await createSession(input.terminalSessionName, "terminal");
     await waitFor(() => document.querySelector(".terminal-section .raw-input textarea"), "new terminal session");
     setValue(document.querySelector(".terminal-section .raw-input textarea"), "echo terminal-mode:" + input.terminalModeLine + String.fromCharCode(10));
@@ -154,7 +170,36 @@ async function dashboardSmoke(input) {
     clickText("Terminate");
     await waitFor(() => document.body.innerText.includes("terminated") || document.body.innerText.includes("exited"), "terminate status", 10000);
 
-    return { ok: true, chatSnapshot, terminalModeSnapshot, bodyText: document.body.innerText };
+    let realHarnessSmoke = { skipped: true };
+    if (input.realHarnessSmoke) {
+      const isOpenCode = input.realHarnessSmoke === "opencode";
+      const sessionName = isOpenCode ? input.opencodeSessionName : input.codexSessionName;
+      const command = isOpenCode ? "opencode" : "codex";
+      const cwd = isOpenCode ? input.opencodeCwd : input.codexCwd;
+      const introPattern = isOpenCode ? /opencode/i : /codex|openai/i;
+
+      // QA-009: optional real harness TUI smoke in a disposable /tmp repository.
+      await createSession(sessionName, "terminal", { command, cwd });
+      await waitFor(() => document.querySelector(".terminal-section .raw-input textarea"), "real harness terminal session");
+      const harnessIntro = await waitFor(async () => {
+        const text = await snapshotText(sessionName);
+        return introPattern.test(text) ? text : "";
+      }, "real harness tui output", 15000);
+      setValue(document.querySelector(".terminal-section .raw-input textarea"), input.codexPrompt + String.fromCharCode(10));
+      await delay(150);
+      clickText("Send", document.querySelector(".raw-input"));
+      const promptSnapshot = await waitFor(async () => {
+        const text = await snapshotText(sessionName);
+        return text.includes(input.codexPrompt.slice(0, 32)) || text.length > harnessIntro.length ? text : "";
+      }, "real harness prompt accepted", 15000);
+      clickText("Interrupt");
+      window.confirm = () => true;
+      clickText("Terminate");
+      await waitFor(() => document.body.innerText.includes("terminated") || document.body.innerText.includes("exited"), "real harness terminate status", 10000);
+      realHarnessSmoke = { skipped: false, command, intro: harnessIntro.slice(0, 500), promptSnapshot: promptSnapshot.slice(0, 500) };
+    }
+
+    return { ok: true, chatSnapshot, terminalModeSnapshot, realHarnessSmoke, bodyText: document.body.innerText };
   } catch (err) {
     return {
       ok: false,
@@ -181,6 +226,7 @@ async function reconnectSmoke(input) {
     throw new Error("timed out waiting for " + label);
   };
   try {
+    // QA-007: reload restores the session list and reconnect snapshot.
     await waitFor(() => document.querySelector(".create-form"), "dashboard reconnect");
     const reconnectText = await waitFor(async () => {
       if (!document.body.innerText.includes(input.chatSessionName)) return "";

@@ -65,6 +65,7 @@ export function App() {
   }, []);
 
   const handleCreated = async (session: Session, mode: ViewMode) => {
+    setError(null);
     setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
     setSessionMode(session.id, mode);
     setActiveID(session.id);

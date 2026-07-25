@@ -78,7 +78,7 @@ function CreateSessionForm({ onCreated, onError }: { onCreated: (session: Sessio
       </label>
       <label>
         <span>Args</span>
-        <input value={form.args} onChange={(event) => setForm({ ...form, args: event.target.value })} placeholder="-l" />
+        <input value={form.args} onChange={(event) => setForm({ ...form, args: event.target.value })} placeholder="optional arguments" />
       </label>
       <label>
         <span>CWD</span>

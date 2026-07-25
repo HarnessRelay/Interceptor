@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { api } from "../api/client";
 import type { EventEnvelope, Session, Snapshot } from "../types";
-import { decodeBase64 } from "../utils";
+import { decodeBase64Bytes } from "../utils";
 
 export function TerminalView({
   session,
@@ -70,7 +70,7 @@ export function TerminalView({
       latestSeq.current = snapshot.latest_seq || 0;
       if (reset) term.reset();
       for (const chunk of snapshot.chunks) {
-        term.write(decodeBase64(chunk.bytes));
+        term.write(decodeBase64Bytes(chunk.bytes));
       }
     };
 
@@ -95,7 +95,7 @@ export function TerminalView({
           if (event.type === "terminal.output") {
             const payload = event.data as { data?: string; bytes?: string };
             const encoded = payload?.bytes || payload?.data;
-            if (encoded) term.write(decodeBase64(encoded));
+            if (encoded) term.write(decodeBase64Bytes(encoded));
           }
           if (event.type === "session.exited") {
             api.snapshot(session.id).then((snapshot) => writeSnapshot(snapshot, true)).catch((err: Error) => onError(err.message));
