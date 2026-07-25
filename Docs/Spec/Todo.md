@@ -272,34 +272,34 @@ Goal: manage multiple sessions reliably.
 
 ## 4.1 Session Creation
 
-- [ ] Implement session creation service.
-- [ ] Generate unique session IDs.
-- [ ] Store session metadata.
-- [ ] Validate command input.
-- [ ] Reject invalid working directories.
+- [x] Implement session creation service.
+- [x] Generate unique session IDs.
+- [x] Store session metadata.
+- [x] Validate command input.
+- [x] Reject invalid working directories.
 - [ ] Expose create-session API.
 
 ## 4.2 Session Listing and Reading
 
-- [ ] Implement session list.
-- [ ] Implement session detail.
-- [ ] Include status, command, working directory, timestamps, and adapter ID.
-- [ ] Add tests for session list/detail APIs.
+- [x] Implement session list.
+- [x] Implement session detail.
+- [x] Include status, command, working directory, timestamps, and adapter ID.
+- [x] Add tests for session list/detail APIs.
 
 ## 4.3 Session Status Tracking
 
-- [ ] Track `starting`.
-- [ ] Track `running`.
-- [ ] Track `exited`.
-- [ ] Track `failed`.
-- [ ] Track `terminated`.
+- [x] Track `starting`.
+- [x] Track `running`.
+- [x] Track `exited`.
+- [x] Track `failed`.
+- [x] Track `terminated`.
 - [ ] Add preliminary idle detection if simple enough.
 - [ ] Emit status change events.
 
 ## 4.4 Session Cleanup
 
 - [ ] Define cleanup rules for exited sessions.
-- [ ] Define whether exited sessions remain visible.
+- [x] Define whether exited sessions remain visible.
 - [ ] Add manual cleanup API if needed.
 - [ ] Ensure cleanup does not delete useful audit history unexpectedly.
 
@@ -311,20 +311,20 @@ Goal: stream live session events to the web dashboard.
 
 ## 5.1 Event Types
 
-- [ ] Define event envelope.
-- [ ] Define `terminal.output`.
-- [ ] Define `session.created`.
-- [ ] Define `session.updated`.
-- [ ] Define `session.exited`.
-- [ ] Define `session.status_changed`.
-- [ ] Define `error`.
+- [x] Define event envelope.
+- [x] Define `terminal.output`.
+- [x] Define `session.created`.
+- [x] Define `session.updated`.
+- [x] Define `session.exited`.
+- [x] Define `session.status_changed`.
+- [x] Define `error`.
 
 ## 5.2 Internal Event Bus
 
-- [ ] Implement publish/subscribe event bus.
-- [ ] Support multiple subscribers.
-- [ ] Avoid blocking PTY output on slow clients.
-- [ ] Add tests for event fanout.
+- [x] Implement publish/subscribe event bus.
+- [x] Support multiple subscribers.
+- [x] Avoid blocking PTY output on slow clients.
+- [x] Add tests for event fanout.
 
 ## 5.3 WebSocket Endpoint
 

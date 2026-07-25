@@ -1,0 +1,737 @@
+package session
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/harnessrelay/interceptor/internal/events"
+)
+
+func fixturePath(t *testing.T, name string) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake-harnesses", name))
+	if err != nil {
+		t.Fatalf("fixture path: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("fixture stat: %v", err)
+	}
+	return path
+}
+
+func TestManagerCreateSessionFromFakeHarness(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "test-plain",
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+		Rows:    24,
+		Cols:    80,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if sess.ID == "" {
+		t.Fatal("session ID is empty")
+	}
+	if !strings.HasPrefix(sess.ID, "ses_") {
+		t.Fatalf("unexpected session ID prefix: %s", sess.ID)
+	}
+	if sess.PID <= 0 {
+		t.Fatalf("PID = %d, want positive", sess.PID)
+	}
+	if sess.Status != StatusRunning {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusRunning)
+	}
+
+	waitSessionDone(t, sess, 5*time.Second)
+
+	out := sess.Snapshot()
+	if !strings.Contains(string(out), "plain stdout") {
+		t.Fatalf("snapshot missing stdout: %q", string(out))
+	}
+	if !strings.Contains(string(out), "plain stderr") {
+		t.Fatalf("snapshot missing stderr: %q", string(out))
+	}
+
+	if sess.Status != StatusExited {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusExited)
+	}
+	if sess.ExitedAt == nil {
+		t.Fatal("ExitedAt is nil")
+	}
+	if sess.ExitCode == nil {
+		t.Fatal("ExitCode is nil")
+	}
+	if *sess.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0", *sess.ExitCode)
+	}
+}
+
+func TestManagerList(t *testing.T) {
+	mgr := NewManager()
+
+	if got := len(mgr.List()); got != 0 {
+		t.Fatalf("List length = %d, want 0", got)
+	}
+
+	s1, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	s2, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "session-two",
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	waitSessionDone(t, s1, 5*time.Second)
+	waitSessionDone(t, s2, 5*time.Second)
+
+	list := mgr.List()
+	if len(list) != 2 {
+		t.Fatalf("List length = %d, want 2", len(list))
+	}
+
+	ids := make(map[string]bool)
+	for _, s := range list {
+		ids[s.ID] = true
+	}
+	if !ids[s1.ID] || !ids[s2.ID] {
+		t.Fatalf("List missing expected IDs: %v", ids)
+	}
+}
+
+func TestManagerGet(t *testing.T) {
+	mgr := NewManager()
+
+	_, ok := mgr.Get("nonexistent")
+	if ok {
+		t.Fatal("Get nonexistent returned ok=true")
+	}
+
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	got, ok := mgr.Get(sess.ID)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if got.ID != sess.ID {
+		t.Fatalf("Get ID = %q, want %q", got.ID, sess.ID)
+	}
+}
+
+func TestManagerCreateRejectsEmptyCommand(t *testing.T) {
+	mgr := NewManager()
+	_, err := mgr.Create(context.Background(), CreateOptions{})
+	if err == nil {
+		t.Fatal("expected error for empty command")
+	}
+}
+
+func TestManagerWriteInput(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "interactive-echo.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "input>", 5*time.Second)
+
+	if err := mgr.Write(sess.ID, []byte("hello\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	readUntil(t, sub, "echo:hello", 5*time.Second)
+}
+
+func TestManagerInterrupt(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "long-running.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "ready", 5*time.Second)
+
+	if err := mgr.Interrupt(sess.ID); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	readUntil(t, sub, "interrupted", 5*time.Second)
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if sess.Status != StatusExited {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusExited)
+	}
+}
+
+func TestManagerTerminate(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "long-running.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "ready", 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.Terminate(ctx, sess.ID); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if sess.Status != StatusTerminated {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusTerminated)
+	}
+}
+
+func TestManagerTerminateKillsSIGTERMIgnoringProcess(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "ignore-term.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "ready", 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := mgr.Terminate(ctx, sess.ID); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if sess.Status != StatusTerminated {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusTerminated)
+	}
+}
+
+func TestManagerResize(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "resize-aware.sh")},
+		Rows:    24,
+		Cols:    80,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "ready", 5*time.Second)
+
+	if err := mgr.Resize(sess.ID, 40, 100); err != nil {
+		t.Fatalf("Resize: %v", err)
+	}
+	if _, err := sess.runtime.Write([]byte("size\n")); err != nil {
+		t.Fatalf("write size probe: %v", err)
+	}
+
+	readUntil(t, sub, "40 100", 5*time.Second)
+}
+
+func TestManagerUnknownSessionErrors(t *testing.T) {
+	mgr := NewManager()
+	unknownID := "ses_nonexistent"
+
+	if err := mgr.Write(unknownID, []byte("data")); err == nil {
+		t.Fatal("Write on unknown session should fail")
+	}
+	if err := mgr.Resize(unknownID, 24, 80); err == nil {
+		t.Fatal("Resize on unknown session should fail")
+	}
+	if err := mgr.Interrupt(unknownID); err == nil {
+		t.Fatal("Interrupt on unknown session should fail")
+	}
+	ctx := context.Background()
+	if err := mgr.Terminate(ctx, unknownID); err == nil {
+		t.Fatal("Terminate on unknown session should fail")
+	}
+}
+
+func TestManagerWriteAndInterruptOnExitedSession(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if err := mgr.Write(sess.ID, []byte("data")); err == nil {
+		t.Fatal("Write on exited session should fail")
+	}
+	if err := mgr.Interrupt(sess.ID); err == nil {
+		t.Fatal("Interrupt on exited session should fail")
+	}
+	ctx := context.Background()
+	if err := mgr.Terminate(ctx, sess.ID); err == nil {
+		t.Fatal("Terminate on exited session should fail")
+	}
+}
+
+func TestSessionSubscription(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ch := sess.Subscribe()
+
+	for chunk := range ch {
+		if chunk.Done {
+			break
+		}
+	}
+
+	waitSessionDone(t, sess, 5*time.Second)
+
+	if sess.Status != StatusExited {
+		t.Fatalf("Status = %q, want %q", sess.Status, StatusExited)
+	}
+}
+
+func TestSessionSubscriptionAfterExit(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	ch := sess.Subscribe()
+
+	hasDone := false
+	for chunk := range ch {
+		if chunk.Done {
+			hasDone = true
+			break
+		}
+	}
+	if !hasDone {
+		t.Fatal("late subscription did not receive Done")
+	}
+}
+
+func TestSessionSnapshot(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	snap := sess.Snapshot()
+	if len(snap) == 0 {
+		t.Fatal("snapshot is empty")
+	}
+	if !strings.Contains(string(snap), "plain stdout") {
+		t.Fatalf("snapshot missing stdout: %q", string(snap))
+	}
+}
+
+func TestMultipleSubscribers(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "interactive-echo.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub1 := sess.Subscribe()
+	sub2 := sess.Subscribe()
+
+	readUntil(t, sub1, "input>", 5*time.Second)
+
+	if err := mgr.Write(sess.ID, []byte("hello\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	readUntil(t, sub2, "echo:hello", 5*time.Second)
+}
+
+func readUntil(t *testing.T, ch <-chan OutputChunk, want string, timeout time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	var got strings.Builder
+	for {
+		select {
+		case chunk, ok := <-ch:
+			if !ok {
+				t.Fatalf("channel closed while waiting for %q, got: %q", want, got.String())
+			}
+			if chunk.Done {
+				t.Fatalf("got Done while waiting for %q, accumulated: %q", want, got.String())
+			}
+			got.Write(chunk.Data)
+			if strings.Contains(got.String(), want) {
+				return
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %q in output %q", want, got.String())
+		}
+	}
+}
+
+func waitSessionDone(t *testing.T, s *Session, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-s.done:
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for session to complete")
+	}
+}
+
+func collectEventsByType(sub *events.Subscription, timeout time.Duration) map[events.Type][]events.Event {
+	result := make(map[events.Type][]events.Event)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case ev, ok := <-sub.C:
+			if !ok {
+				return result
+			}
+			result[ev.Type] = append(result[ev.Type], ev)
+		case <-timer.C:
+			sub.Close()
+			return result
+		}
+	}
+}
+
+func TestManagerWithBusPublishesSessionCreated(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 32})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+	created, ok := byType[events.TypeSessionCreated]
+	if !ok || len(created) == 0 {
+		t.Fatal("no session.created event received")
+	}
+	if created[0].SessionID != sess.ID {
+		t.Fatalf("session.created SessionID = %q, want %q", created[0].SessionID, sess.ID)
+	}
+}
+
+func TestManagerWithBusPublishesTerminalOutput(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 64})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+	outputs, ok := byType[events.TypeTerminalOutput]
+	if !ok || len(outputs) == 0 {
+		t.Fatal("no terminal.output events received")
+	}
+
+	var full strings.Builder
+	for _, ev := range outputs {
+		if ev.SessionID != sess.ID {
+			t.Fatalf("terminal.output SessionID = %q, want %q", ev.SessionID, sess.ID)
+		}
+		d, ok := ev.Data.(events.TerminalOutput)
+		if ok {
+			full.Write(d.Data)
+		}
+	}
+	if !strings.Contains(full.String(), "plain stdout") {
+		t.Fatalf("terminal.output missing stdout: %q", full.String())
+	}
+}
+
+func TestManagerWithBusPublishesStatusChanged(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 32})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+	statuses, ok := byType[events.TypeSessionStatusChanged]
+	if !ok || len(statuses) == 0 {
+		t.Fatal("no session.status_changed events received")
+	}
+
+	for _, ev := range statuses {
+		if ev.SessionID != sess.ID {
+			t.Fatalf("session.status_changed SessionID = %q, want %q", ev.SessionID, sess.ID)
+		}
+	}
+
+	foundStartingToRunning := false
+	foundRunningToExited := false
+	for _, ev := range statuses {
+		d, ok := ev.Data.(events.SessionStatusChanged)
+		if !ok {
+			continue
+		}
+		if d.OldStatus == "starting" && d.NewStatus == "running" {
+			foundStartingToRunning = true
+		}
+		if d.OldStatus == "running" && d.NewStatus == "exited" {
+			foundRunningToExited = true
+		}
+	}
+	if !foundStartingToRunning {
+		t.Fatal("missing starting->running status change")
+	}
+	if !foundRunningToExited {
+		t.Fatal("missing running->exited status change")
+	}
+}
+
+func TestManagerWithBusPublishesSessionExited(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 32})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+	exited, ok := byType[events.TypeSessionExited]
+	if !ok || len(exited) == 0 {
+		t.Fatal("no session.exited event received")
+	}
+
+	ev := exited[len(exited)-1]
+	if ev.SessionID != sess.ID {
+		t.Fatalf("session.exited SessionID = %q, want %q", ev.SessionID, sess.ID)
+	}
+	d, ok := ev.Data.(events.SessionExited)
+	if !ok {
+		t.Fatalf("session.exited Data type = %T, want SessionExited", ev.Data)
+	}
+	if d.ExitCode != 0 {
+		t.Fatalf("session.exited ExitCode = %d, want 0", d.ExitCode)
+	}
+	if d.Reason != "process_exit" {
+		t.Fatalf("session.exited Reason = %q, want process_exit", d.Reason)
+	}
+}
+
+func TestManagerWithBusTerminatePublishesSignalReason(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{
+		Buffer: 32,
+		Types:  []events.Type{events.TypeSessionExited},
+	})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "long-running.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.Terminate(ctx, sess.ID); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+	exited, ok := byType[events.TypeSessionExited]
+	if !ok || len(exited) == 0 {
+		t.Fatal("no session.exited event received")
+	}
+
+	ev := exited[len(exited)-1]
+	d, ok := ev.Data.(events.SessionExited)
+	if !ok {
+		t.Fatalf("session.exited Data type = %T", ev.Data)
+	}
+	if d.Reason != "signal" {
+		t.Fatalf("session.exited Reason = %q, want signal", d.Reason)
+	}
+}
+
+func TestManagerWithBusInterruptPublishesExited(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{
+		Buffer: 32,
+		Types:  []events.Type{events.TypeSessionExited},
+	})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "long-running.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := mgr.Interrupt(sess.ID); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+	exited, ok := byType[events.TypeSessionExited]
+	if !ok || len(exited) == 0 {
+		t.Fatal("no session.exited event received")
+	}
+
+	ev := exited[len(exited)-1]
+	d, ok := ev.Data.(events.SessionExited)
+	if !ok {
+		t.Fatalf("session.exited Data type = %T", ev.Data)
+	}
+	if d.Reason != "process_exit" && d.Reason != "signal" {
+		t.Fatalf("session.exited Reason = %q, want process_exit or signal", d.Reason)
+	}
+}
+
+func TestManagerWithoutBusDoesNotPublish(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 64})
+	defer sub.Close()
+
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	sub.Close()
+	count := 0
+	for range sub.C {
+		count++
+	}
+	if count > 0 {
+		t.Fatalf("received %d events without bus, want 0", count)
+	}
+}
+
+func TestManagerWithBusSequenceOrder(t *testing.T) {
+	bus := events.NewBus()
+	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 64})
+	defer sub.Close()
+
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	byType := collectEventsByType(sub, 2*time.Second)
+
+	var all []events.Event
+	all = append(all, byType[events.TypeSessionCreated]...)
+	all = append(all, byType[events.TypeSessionStatusChanged]...)
+	all = append(all, byType[events.TypeTerminalOutput]...)
+	all = append(all, byType[events.TypeSessionExited]...)
+
+	if len(all) == 0 {
+		t.Fatal("no events received")
+	}
+	for _, ev := range all {
+		if ev.Sequence == 0 {
+			t.Fatalf("event %q has sequence 0", ev.Type)
+		}
+	}
+}
