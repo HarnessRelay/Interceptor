@@ -21,8 +21,10 @@
 The dashboard source is split into:
 
 - `web/src/api`: browser API client and CSRF-aware request helper
-- `web/src/components`: sidebar, session header, Chat Mode, Terminal Mode, slash menu, and event inspector
-- `web/src/theme`: shared navy/teal product tokens
+- `web/src/components`: session manager/cards, accessible dialogs and menus,
+  session header, Chat Mode, Terminal Mode, and inspector drawer
+- `web/src/theme`: centralized navy/teal color, spacing, typography, motion,
+  focus, and z-index tokens
 - `web/src/assets`: owner-provided logo placement notes
 
 ## Commands
@@ -36,6 +38,18 @@ make run
 
 `make build` builds the dashboard first, then `bin/harnessd` and `bin/harnessctl`.
 
+Frontend-only verification:
+
+```bash
+npm --prefix web run build
+npm --prefix web run qa
+npm --prefix web run qa:a11y
+```
+
+`qa` runs the full Playwright suite against a disposable local daemon.
+`qa:a11y` runs the keyboard, naming, focus containment, and token contrast
+regression. Both require a browser with localhost access.
+
 ## Dashboard Smoke
 
 The browser smoke script drives the built dashboard through Chrome DevTools Protocol. Start `harnessd` and a headless Chrome instance first:
@@ -48,7 +62,10 @@ HARNESSRELAY_TOKEN=dashboard-token node qa/dashboard-smoke.mjs
 
 The smoke logs in, creates a Chat Mode shell session, sends a prompt through the composer, switches to Terminal Mode, sends raw terminal input, switches back to Chat Mode, reloads to verify reconnect/snapshot behavior, creates a Terminal Mode session, and exercises interrupt/terminate controls.
 
-The active browser QA log lives at `Docs/QA/WebApp-QA.md`. Each regression covered by the smoke is labeled with its QA ID in `qa/dashboard-smoke.mjs`.
+The legacy browser QA log lives at `Docs/QA/WebApp-QA.md`. The production UI
+redesign audit and named screenshot reviews live at
+`Docs/QA/UI-Revamp-QA.md`; the accessibility record is
+`Docs/QA/Accessibility-QA.md`.
 
 An optional real-harness smoke path is available only when explicitly approved:
 

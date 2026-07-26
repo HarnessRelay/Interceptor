@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { api } from "../api/client";
 import type { EventEnvelope, Session, Snapshot } from "../types";
-import { decodeBase64Bytes } from "../utils";
+import { decodeBase64Bytes, isLive } from "../utils";
 
 export function TerminalView({
   session,
@@ -24,6 +24,8 @@ export function TerminalView({
   const latestSeq = useRef(0);
   const [rawInput, setRawInput] = useState("");
   const [connected, setConnected] = useState(false);
+  const streamLive = connected && isLive(session.status);
+  const streamLabel = !isLive(session.status) ? "Snapshot" : connected ? "Live" : "Connecting";
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -49,13 +51,27 @@ export function TerminalView({
     let resizeTimer = 0;
     let disposed = false;
     let acceptInput = session.status === "starting" || session.status === "running";
+    let lastRows = 0;
+    let lastCols = 0;
+    let lastHostWidth = 0;
+    let lastHostHeight = 0;
 
     const sendResize = () => {
+      const host = hostRef.current;
+      if (!host) return;
+      const width = host.clientWidth;
+      const height = host.clientHeight;
+      if (Math.abs(width - lastHostWidth) < 1 && Math.abs(height - lastHostHeight) < 1) return;
+      lastHostWidth = width;
+      lastHostHeight = height;
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         if (disposed || !fitRef.current || !terminalRef.current) return;
         fitRef.current.fit();
         const activeTerm = terminalRef.current;
+        if (activeTerm.rows === lastRows && activeTerm.cols === lastCols) return;
+        lastRows = activeTerm.rows;
+        lastCols = activeTerm.cols;
         api.resize(session.id, activeTerm.rows, activeTerm.cols).catch((err) => onError(err.message));
       }, 90);
     };
@@ -140,15 +156,23 @@ export function TerminalView({
   return (
     <section className="terminal-section" aria-label="Terminal mode">
       <div className="terminal-bar">
-        <span className={connected ? "stream-state is-connected" : "stream-state"}>{connected ? "Live stream" : "Connecting"}</span>
-        <span>{session.terminal.rows}×{session.terminal.cols}</span>
-        <button onClick={onOpenChat}>Open Chat</button>
+        <div className="terminal-identity">
+          <span className={streamLive ? "stream-state is-connected" : "stream-state"}><span className="activity-dot" aria-hidden="true" />{streamLabel}</span>
+          <span className="terminal-dimensions">{session.terminal.rows} rows × {session.terminal.cols} columns</span>
+        </div>
+        <button className="quiet-button" onClick={onOpenChat}>Open Chat</button>
       </div>
-      <div className="terminal-host" ref={hostRef} />
-      <div className="raw-input">
-        <textarea value={rawInput} onChange={(event) => setRawInput(event.target.value)} placeholder="Raw input fallback" />
-        <button onClick={sendRawInput}>Send</button>
-      </div>
+      <div className="terminal-host" ref={hostRef} aria-label="Interactive terminal" />
+      <details className="raw-input-fallback">
+        <summary>Raw input fallback</summary>
+        <div className="raw-input">
+          <label>
+            <span className="visually-hidden">Raw terminal input</span>
+            <textarea value={rawInput} onChange={(event) => setRawInput(event.target.value)} placeholder="Type or paste exact terminal input" />
+          </label>
+          <button onClick={sendRawInput}>Send input</button>
+        </div>
+      </details>
     </section>
   );
 }

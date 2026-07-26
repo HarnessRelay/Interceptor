@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, setCSRFToken } from "../api/client";
-import type { EventEnvelope, HarnessPreset, Session, ViewMode } from "../types";
+import type { EventEnvelope, HarnessPreset, SemanticEventData, Session, ViewMode } from "../types";
 import { EmptyState } from "./EmptyState";
 import { EventInspector } from "./EventInspector";
 import { LoginScreen } from "./LoginScreen";
@@ -23,12 +23,17 @@ export function App() {
   const [harnesses, setHarnesses] = useState<HarnessPreset[]>([]);
   const [modeBySession, setModeBySession] = useState<Record<string, ViewMode>>({});
   const [chatMessagesBySession, setChatMessagesBySession] = useState<Record<string, ChatMessage[]>>(readStoredChatMessages);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [createSignal, setCreateSignal] = useState(0);
 
   const active = useMemo(
     () => sessions.find((session) => session.id === activeID) || null,
     [activeID, sessions]
   );
   const activeMode = active ? modeBySession[active.id] || "chat" : "chat";
+  const activeMetadata = [...events]
+    .reverse()
+    .find((event) => event.session_id === activeID && event.type === "harness.metadata")?.data as SemanticEventData | undefined;
 
   const refreshSessions = useCallback(async () => {
     const next = await api.listSessions();
@@ -67,6 +72,10 @@ export function App() {
   useEffect(() => {
     writeStoredChatMessages(chatMessagesBySession);
   }, [chatMessagesBySession]);
+
+  useEffect(() => {
+    setInspectorOpen(false);
+  }, [activeID]);
 
   const handleLogin = async (token: string) => {
     const status = await api.login(token);
@@ -127,6 +136,7 @@ export function App() {
         onError={setError}
         onSelect={setActiveID}
         modeBySession={modeBySession}
+        createSignal={createSignal}
       />
 
       <section className="workspace" aria-label="Active harness session">
@@ -141,9 +151,11 @@ export function App() {
             <SessionHeader
               session={active}
               mode={activeMode}
+              model={activeMetadata?.model}
               onModeChange={(mode) => setSessionMode(active.id, mode)}
               onInterrupt={updateActiveSession}
               onTerminate={updateActiveSession}
+              onOpenInspector={() => setInspectorOpen(true)}
               onError={setError}
             />
             {activeMode === "chat" ? (
@@ -153,6 +165,7 @@ export function App() {
                 messages={activeMessages}
                 setMessages={setChatMessages}
                 onOpenTerminal={() => setSessionMode(active.id, "terminal")}
+                onOpenInspector={() => setInspectorOpen(true)}
                 onSessionUpdate={updateActiveSession}
                 onEvent={handleSessionEvent}
                 onError={setError}
@@ -167,13 +180,19 @@ export function App() {
               />
             )}
             <EventInspector
+              open={inspectorOpen}
+              session={active}
               events={activeEvents}
-              onOpenTerminal={() => setSessionMode(active.id, "terminal")}
+              onClose={() => setInspectorOpen(false)}
+              onOpenTerminal={() => {
+                setSessionMode(active.id, "terminal");
+                setInspectorOpen(false);
+              }}
               onError={setError}
             />
           </>
         ) : (
-          <EmptyState loading={loading} />
+          <EmptyState loading={loading} onCreate={() => setCreateSignal((value) => value + 1)} />
         )}
       </section>
     </main>

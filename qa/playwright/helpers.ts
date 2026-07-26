@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 export const token = "dashboard-token";
-export const screenshotDir = "../qa/artifacts/screenshots";
+export const screenshotDir = "../qa/artifacts/screenshots/ui-revamp";
 
 export async function login(page: Page) {
   await page.goto("/");
@@ -10,21 +10,21 @@ export async function login(page: Page) {
     await password.fill(token);
     await page.locator(".login-panel").evaluate((form) => (form as HTMLFormElement).requestSubmit());
   }
-  await expect(page.locator(".session-launcher")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
 }
 
 export async function createSession(page: Page, options: { name: string; command: string; args?: string; cwd?: string; mode?: "chat" | "terminal" }) {
   const form = page.locator(".create-form");
   if (!(await form.isVisible())) {
-    await page.getByRole("button", { name: "Manual" }).click();
+    await page.locator(".new-session-button").click();
   }
   await expect(form).toBeVisible();
   await form.locator("label", { hasText: "Name" }).locator("input").fill(options.name);
   await form.locator("label", { hasText: "Command" }).locator("input").fill(options.command);
-  await form.locator("label", { hasText: "Args" }).locator("input").fill(options.args || "");
-  await form.locator("label", { hasText: "CWD" }).locator("input").fill(options.cwd || "");
-  await form.getByRole("button", { name: options.mode === "terminal" ? "Terminal" : "Chat" }).click();
-  await form.getByRole("button", { name: "Create session" }).click();
+  await form.locator("label", { hasText: "Arguments" }).locator("input").fill(options.args || "");
+  await form.locator("label", { hasText: "Working directory" }).locator("input").fill(options.cwd || "");
+  await form.getByRole("tab", { name: options.mode === "terminal" ? "Terminal" : "Chat" }).click();
+  await form.getByRole("button", { name: "Start session" }).click();
   await expect(page.getByRole("button", { name: new RegExp(options.name) })).toBeVisible();
 }
 
@@ -36,8 +36,11 @@ export async function sendChat(page: Page, value: string) {
 
 export async function sendRaw(page: Page, value: string) {
   const rawInput = page.locator(".raw-input");
+  if (!(await rawInput.isVisible())) {
+    await page.locator(".raw-input-fallback summary").click();
+  }
   await rawInput.locator("textarea").fill(value);
-  await rawInput.getByRole("button", { name: "Send" }).click();
+  await rawInput.getByRole("button", { name: "Send input" }).click();
 }
 
 export async function selectSession(page: Page, name: string) {

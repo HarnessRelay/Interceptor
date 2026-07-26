@@ -31,24 +31,58 @@ export function LoginScreen({
 
   return (
     <main className="login-shell">
-      <form className="login-panel" onSubmit={submit}>
-        <div className="brand-lockup">
-          <LogoMark variant="wordmark" />
+      <section className="login-product" aria-labelledby="login-heading">
+        <div className="login-brand">
+          <LogoMark />
+          <span>HarnessRelay</span>
+        </div>
+        <div className="login-value">
+          <p className="login-kicker">Local control plane</p>
+          <h1 id="login-heading">Your coding harnesses,<br />under one roof.</h1>
+          <p>Run, inspect, and steer terminal-based coding agents through a calm semantic workspace—with the raw terminal always available.</p>
+        </div>
+        <div className="security-note">
+          <span className="security-icon" aria-hidden="true">⌾</span>
           <div>
-            <h1 className="visually-hidden">HarnessRelay</h1>
-            <p>Enter the local dashboard token from the daemon startup log.</p>
+            <strong>Local-first by design</strong>
+            <p>HarnessRelay binds to your machine and protects every session with an access token.</p>
           </div>
         </div>
-        <label>
-          <span>Local token</span>
-          <input className="visually-hidden" tabIndex={-1} autoComplete="username" value="local" readOnly aria-hidden="true" />
-          <input value={token} onChange={(event) => setToken(event.target.value)} type="password" autoComplete="current-password" disabled={loading || submitting} />
-        </label>
-        {error && <div className="login-error">{error}</div>}
-        <button className="primary-button" disabled={loading || submitting || token.trim() === ""}>
-          {submitting ? "Signing in" : "Sign in"}
-        </button>
-      </form>
+      </section>
+      <section className="login-form-region" aria-label="Dashboard sign in">
+        <form className="login-panel" onSubmit={submit}>
+          <div className="login-form-heading">
+            <span className="connection-mark" aria-hidden="true"><i /></span>
+            <div>
+              <h2>Connect to daemon</h2>
+              <p>Enter the token printed when <code>harnessd</code> started.</p>
+            </div>
+          </div>
+          <label>
+            <span>Dashboard token</span>
+            <input className="visually-hidden" tabIndex={-1} autoComplete="username" value="local" readOnly aria-hidden="true" />
+            <input
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              type="password"
+              autoComplete="current-password"
+              disabled={loading || submitting}
+              placeholder="Paste your local access token"
+              autoFocus
+            />
+          </label>
+          {error && <div className="login-error" role="alert">{error}</div>}
+          <button className="primary-button login-submit" disabled={loading || submitting || token.trim() === ""}>
+            {submitting ? "Connecting…" : "Connect securely"}
+            <span aria-hidden="true">→</span>
+          </button>
+          <p className="login-help">The token stays in an HttpOnly local session. It is never stored in browser storage.</p>
+        </form>
+        <footer className="login-footer">
+          <span><i aria-hidden="true" /> 127.0.0.1 only</span>
+          <span>Terminal source of truth</span>
+        </footer>
+      </section>
     </main>
   );
 }

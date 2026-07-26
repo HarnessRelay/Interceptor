@@ -36,7 +36,8 @@ export const api = {
         command: input.command,
         args: splitArgs(input.args),
         cwd: input.cwd || undefined,
-        terminal: { rows: 24, cols: 80 }
+        env: input.env && Object.keys(input.env).length > 0 ? input.env : undefined,
+        terminal: { rows: input.rows || 24, cols: input.cols || 80 }
       })
     });
     return data.session;

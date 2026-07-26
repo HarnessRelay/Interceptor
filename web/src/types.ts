@@ -78,6 +78,9 @@ export type CreateForm = {
   args: string;
   cwd: string;
   mode: ViewMode;
+  rows?: number;
+  cols?: number;
+  env?: Record<string, string>;
 };
 
 export type HarnessPreset = {

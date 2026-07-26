@@ -14,6 +14,19 @@ function unexpectedErrors(errors: string[]) {
   return errors.filter((message) => !/401 \(Unauthorized\)|400 \(Bad Request\)/.test(message));
 }
 
+async function openSessionMore(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "More session actions" }).click();
+  return page.getByRole("menu", { name: "Session actions" });
+}
+
+async function terminateCurrentSession(page: import("@playwright/test").Page) {
+  const menu = await openSessionMore(page);
+  await menu.getByRole("menuitem", { name: "Terminate session" }).click();
+  const dialog = page.getByRole("dialog", { name: "Terminate session?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Terminate", exact: true }).click();
+}
+
 test("Screen 1: Login/Auth", async ({ page, request }) => {
   const errors = await consoleErrors(page);
   const unauthenticated = await request.get("/api/v1/sessions");
@@ -21,8 +34,9 @@ test("Screen 1: Login/Auth", async ({ page, request }) => {
 
   await page.goto("/");
   await expect(page.locator(".login-panel")).toBeVisible();
-  await expect(page.locator(".logo-wordmark")).toBeVisible();
-  await page.screenshot({ path: `${screenshotDir}/login.png`, fullPage: true });
+  await expect(page.locator(".login-brand")).toContainText("HarnessRelay");
+  await expect(page.locator(".security-note")).toContainText("Local-first");
+  await page.screenshot({ path: `${screenshotDir}/01-login.png`, fullPage: true });
 
   const password = page.locator(".login-panel input[type=password]");
   await password.fill("wrong-token");
@@ -31,9 +45,9 @@ test("Screen 1: Login/Auth", async ({ page, request }) => {
 
   await password.fill("dashboard-token");
   await password.press("Enter");
-  await expect(page.locator(".session-launcher")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
   await page.reload();
-  await expect(page.locator(".session-launcher")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
   await expect(unexpectedErrors(errors)).toEqual([]);
 });
 
@@ -41,13 +55,14 @@ test("Screen 2: Empty App Shell", async ({ page }) => {
   const errors = await consoleErrors(page);
   await login(page);
 
-  await expect(page.locator(".brand")).toContainText("HarnessRelay");
-  await expect(page.locator(".session-launcher")).toBeVisible();
-  await expect(page.locator(".session-empty")).toContainText("No sessions yet");
-  await expect(page.locator(".empty-state")).toContainText(/detected harness|Checking the local daemon/);
+  await expect(page.locator(".sidebar-header")).toContainText("HarnessRelay");
+  await expect(page.locator(".new-session-button")).toBeVisible();
+  await expect(page.locator(".session-list-state")).toContainText("No sessions yet");
+  await expect(page.locator(".empty-state")).toContainText(/Start a local harness|Loading your sessions/);
+  await expect(page.locator(".event-panel")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Refresh sessions" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await page.screenshot({ path: `${screenshotDir}/empty-app-shell.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/02-empty-state.png`, fullPage: true });
   await expect(unexpectedErrors(errors)).toEqual([]);
 });
 
@@ -55,28 +70,30 @@ test("Screen 3: Create Session", async ({ page }) => {
   const errors = await consoleErrors(page);
   await login(page);
 
-  await page.getByRole("button", { name: "Manual" }).click();
+  await page.locator(".new-session-button").click();
   const form = page.locator(".create-form");
   await expect(form.locator("label", { hasText: "Name" }).locator("input")).toBeVisible();
   await expect(form.locator("label", { hasText: "Command" }).locator("input")).toHaveValue("/bin/bash");
-  await expect(form.locator("label", { hasText: "Args" }).locator("input")).toHaveAttribute("placeholder", "optional arguments");
-  await expect(form.locator("label", { hasText: "Args" }).locator("input")).toHaveValue("");
-  await expect(form.locator("label", { hasText: "CWD" }).locator("input")).toHaveAttribute("placeholder", "daemon default");
-  await expect(form.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+  await expect(form.locator("label", { hasText: "Arguments" }).locator("input")).toHaveAttribute("placeholder", "No arguments");
+  await expect(form.locator("label", { hasText: "Arguments" }).locator("input")).toHaveValue("");
+  await expect(form.locator("label", { hasText: "Working directory" }).locator("input")).toHaveAttribute("placeholder", "Use daemon working directory");
+  await expect(form.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+  await page.screenshot({ path: `${screenshotDir}/03-create-session.png`, fullPage: true });
 
   await form.locator("label", { hasText: "Command" }).locator("input").fill("");
-  await form.getByRole("button", { name: "Create session" }).click();
-  await expect(page.locator(".notice")).toContainText("Command is required.");
+  await form.getByRole("button", { name: "Start session" }).click();
+  await expect(form.locator(".field-error")).toContainText("Enter a command");
 
   await form.locator("label", { hasText: "Command" }).locator("input").fill("/bin/harnessrelay-missing-command");
-  await form.getByRole("button", { name: "Create session" }).click();
+  await form.getByRole("button", { name: "Start session" }).click();
   await expect(page.locator(".notice")).toContainText(/no such file|not found|executable/i);
 
   const unique = Date.now();
   await createSession(page, { name: `pw-create-${unique}`, command: "/bin/echo", args: `create-ok-${unique}`, cwd: "/tmp", mode: "terminal" });
-  await expect(page.locator(".session-list .session-item").first()).toContainText(`pw-create-${unique}`);
+  await expect(page.locator(".session-list .session-card").first()).toContainText(`pw-create-${unique}`);
+  await expect(page.locator(".session-card").first().locator(".adapter-badge")).toBeVisible();
   await expect(page.locator(".terminal-section")).toBeVisible();
-  await page.screenshot({ path: `${screenshotDir}/create-session.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/04-session-cards.png`, fullPage: true });
   await expect(unexpectedErrors(errors)).toEqual([]);
 });
 
@@ -107,22 +124,20 @@ test("Screen 4: Chat Mode with simple shell", async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await expectNoChatGarbage(page.locator(".transcript"));
-  await page.screenshot({ path: `${screenshotDir}/chat-shell.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/05-chat-mode-generic.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Open Terminal" }).click();
-  await expect(page.locator(".terminal-section .raw-input textarea")).toBeVisible();
   await expect(page.locator(".xterm-rows")).toBeVisible();
   await sendRaw(page, `echo terminal-mode-works-${unique}\n`);
   await expect(page.locator("body")).toContainText(`terminal-mode-works-${unique}`);
-  await page.screenshot({ path: `${screenshotDir}/terminal-mode.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/08-terminal-mode.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Open Chat" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
   await expect(page.locator(".transcript .message-user", { hasText: `echo chat-mode-works-${unique}` })).toBeVisible();
   await expect(page.locator(".transcript .message-assistant", { hasText: `chat-mode-works-${unique}` }).first()).toBeVisible();
 
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Terminate", exact: true }).click();
+  await terminateCurrentSession(page);
   await expect(errors).toEqual([]);
 });
 
@@ -137,8 +152,8 @@ test("Screen 6: Slash Command Menu", async ({ page }) => {
   await expect(menu).toBeVisible();
   await expect(menu).toHaveAttribute("role", "menu");
   await expect(menu.getByRole("menuitem", { name: "Send Enter" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "Open Terminal Mode" })).toBeVisible();
-  await page.screenshot({ path: `${screenshotDir}/slash-menu.png`, fullPage: true });
+  await expect(menu.getByRole("menuitem", { name: "Open Terminal" })).toBeVisible();
+  await page.screenshot({ path: `${screenshotDir}/07-slash-menu.png`, fullPage: true });
 
   await menu.getByRole("menuitem", { name: "Refresh snapshot" }).click();
   await expect(menu).toBeHidden();
@@ -150,25 +165,23 @@ test("Screen 6: Slash Command Menu", async ({ page }) => {
   }
 
   await page.locator(".slash-button").click();
-  await page.locator(".slash-menu").getByRole("menuitem", { name: "Open Terminal Mode" }).click();
+  await page.locator(".slash-menu").getByRole("menuitem", { name: "Open Terminal" }).click();
   await expect(page.locator(".terminal-section")).toBeVisible();
   await page.getByRole("button", { name: "Open Chat" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
 
   await page.locator(".slash-button").click();
-  page.once("dialog", async (dialog) => {
-    expect(dialog.type()).toBe("confirm");
-    await dialog.dismiss();
-  });
-  await page.locator(".slash-menu").getByRole("menuitem", { name: "Terminate" }).click();
+  await page.locator(".slash-menu").getByRole("menuitem", { name: "Terminate session" }).click();
+  const terminateDialog = page.getByRole("dialog", { name: "Terminate session?" });
+  await expect(terminateDialog).toBeVisible();
+  await terminateDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
 
   await page.locator(".slash-button").click();
-  page.once("dialog", async (dialog) => {
-    expect(dialog.type()).toBe("prompt");
-    await dialog.dismiss();
-  });
-  await page.locator(".slash-menu").getByRole("menuitem", { name: "Force kill" }).click();
+  await page.locator(".slash-menu").getByRole("menuitem", { name: "Force kill…" }).click();
+  const killDialog = page.getByRole("dialog", { name: "Force kill session?" });
+  await expect(killDialog).toBeVisible();
+  await killDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
   await expect(errors).toEqual([]);
 });
@@ -206,7 +219,7 @@ test("QA-002: Chat Mode suppresses live noisy TUI artifacts consistently", async
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
 
   await page.reload();
-  await expect(page.locator(".session-launcher")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
   await selectSession(page, sessionName);
   await expect(page.locator(".transcript")).toContainText("This session is using a terminal UI");
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
@@ -268,23 +281,28 @@ test("Screen 7: Terminal Mode", async ({ page }) => {
   await sendRaw(page, `echo after-interrupt-${unique}\n`);
   await waitForSnapshotText(page, sessionName, `after-interrupt-${unique}`);
 
-  const eventPanelHeight = await page.locator(".event-panel").boundingBox().then((box) => box?.height || 0);
-  expect(eventPanelHeight).toBeLessThan(80);
+  await expect(page.locator(".event-panel")).toHaveCount(0);
+  const sessionMenu = await openSessionMore(page);
+  await sessionMenu.getByRole("menuitem", { name: "Open inspector" }).click();
+  await expect(page.getByRole("complementary", { name: "Session inspector" })).toBeVisible();
+  await page.getByRole("tab", { name: /Events/ }).click();
+  await expect(page.locator(".event-list")).toBeVisible();
+  await page.screenshot({ path: `${screenshotDir}/09-inspector.png`, fullPage: true });
+  await page.getByRole("button", { name: "Close inspector" }).click();
 
   await page.getByRole("button", { name: "Open Chat" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await waitForSnapshotText(page, sessionName, `xterm-typed-${unique}`);
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.type()).toBe("prompt");
-    await dialog.dismiss();
-  });
-  await page.getByRole("button", { name: "Force kill" }).click();
+  const moreMenu = await openSessionMore(page);
+  await moreMenu.getByRole("menuitem", { name: "Force kill…" }).click();
+  const killDialog = page.getByRole("dialog", { name: "Force kill session?" });
+  await expect(killDialog).toBeVisible();
+  await killDialog.getByRole("button", { name: "Cancel" }).click();
 
-  await page.screenshot({ path: `${screenshotDir}/terminal-mode.png`, fullPage: true });
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Terminate", exact: true }).click();
+  await page.screenshot({ path: `${screenshotDir}/08-terminal-mode.png`, fullPage: true });
+  await terminateCurrentSession(page);
   await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
   await expect(errors).toEqual([]);
 });
@@ -300,7 +318,7 @@ test("Screen 8: Reconnect and Reload", async ({ page }) => {
   await waitForSnapshotText(page, sessionName, `before-reload-${unique}`);
 
   await page.reload();
-  await expect(page.locator(".session-launcher")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
   await expect(page.getByRole("button", { name: new RegExp(sessionName) })).toBeVisible();
   await selectSession(page, sessionName);
   await expect(page.locator(".transcript")).toContainText(`before-reload-${unique}`);
@@ -321,7 +339,7 @@ test("Screen 8: Reconnect and Reload", async ({ page }) => {
   await page.waitForTimeout(250);
 
   await selectSession(page, sessionName);
-  await page.screenshot({ path: `${screenshotDir}/reconnect.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/11-reconnect.png`, fullPage: true });
   await expect(errors).toEqual([]);
 });
 
@@ -340,7 +358,7 @@ test("Screen 9: Multiple Sessions", async ({ page }) => {
   await sendRaw(page, `echo second-only-${unique}\n`);
   await waitForSnapshotText(page, second, `second-only-${unique}`);
 
-  await expect(page.locator(".session-list .session-item").first()).toContainText(second);
+  await expect(page.locator(".session-list .session-card").first()).toContainText(second);
   await selectSession(page, first);
   await sendRaw(page, `echo first-selected-${unique}\n`);
   await waitForSnapshotText(page, first, `first-selected-${unique}`);
@@ -351,14 +369,13 @@ test("Screen 9: Multiple Sessions", async ({ page }) => {
   await waitForSnapshotText(page, second, `second-selected-${unique}`);
   expect(await snapshotText(page, first)).not.toContain(`second-selected-${unique}`);
 
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Terminate", exact: true }).click();
+  await terminateCurrentSession(page);
   await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
   await selectSession(page, first);
   await sendRaw(page, `echo first-still-running-${unique}\n`);
   await waitForSnapshotText(page, first, `first-still-running-${unique}`);
 
-  await page.screenshot({ path: `${screenshotDir}/multiple-sessions.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/10-multiple-sessions.png`, fullPage: true });
   await expect(errors).toEqual([]);
 });
 
@@ -380,7 +397,7 @@ test("QA-001: Chat Mode suppresses full-screen TUI redraw garbage", async ({ pag
   await expect(page.locator(".chat-status-row")).toContainText(/Terminal UI active|Session ended/);
   await expectNoChatGarbage(transcript);
   await expect(page.getByRole("button", { name: "Open Terminal" })).toBeVisible();
-  await page.screenshot({ path: `${screenshotDir}/chat-codex.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/06-chat-mode-codex-or-fake-codex.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await expect(page.locator(".xterm-rows")).toBeVisible();
@@ -398,8 +415,7 @@ test("Semantic adapter: fake Codex remains coherent across chat, terminal, appro
   const fakeCodex = path.join(repoRoot, "testdata/fake-harnesses/codex");
   await createSession(page, { name: sessionName, command: fakeCodex, cwd: "/tmp", mode: "chat" });
 
-  await expect(page.locator(".adapter-badge")).toHaveText("Codex");
-  await expect(page.locator(".session-kicker")).toContainText("Semantic chat");
+  await expect(page.locator(".session-header .adapter-badge")).toHaveText(/Codex/);
   await expect.poll(async () => page.evaluate(async (name) => {
     const response = await fetch("/api/v1/sessions", { credentials: "same-origin" });
     const body = await response.json();
@@ -460,17 +476,116 @@ test("Semantic adapter: fake Codex remains coherent across chat, terminal, appro
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
 
   await page.reload();
-  await expect(page.locator(".session-launcher")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
   await selectSession(page, sessionName);
-  await expect(page.locator(".adapter-badge")).toHaveText("Codex");
+  await expect(page.locator(".session-header .adapter-badge")).toHaveText(/Codex/);
   await expect(page.locator(".transcript")).toContainText(`Fake Codex response to: semantic-enter-${unique}`);
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
-  await page.screenshot({ path: `${screenshotDir}/semantic-codex.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/06-chat-mode-codex-or-fake-codex.png`, fullPage: true });
 
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Terminate", exact: true }).click();
+  await terminateCurrentSession(page);
   await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
   await expect(unexpectedErrors(errors)).toEqual([]);
+});
+
+test("Accessibility QA: keyboard, labels, focus, and contrast", async ({ page }) => {
+  const errors = await consoleErrors(page);
+  await login(page);
+
+  const newSession = page.locator(".new-session-button");
+  await newSession.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "New session" });
+  await expect(dialog).toBeVisible();
+
+  const close = dialog.getByRole("button", { name: "Close New session" });
+  const start = dialog.getByRole("button", { name: "Start session" });
+  await expect(close).toBeFocused();
+  await close.press("Shift+Tab");
+  await expect(start).toBeFocused();
+  await start.press("Tab");
+  await expect(close).toBeFocused();
+
+  const chatTab = dialog.getByRole("tab", { name: "Chat" });
+  await chatTab.focus();
+  await chatTab.press("ArrowRight");
+  await expect(dialog.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(newSession).toBeFocused();
+
+  const unique = Date.now();
+  await createSession(page, { name: `pw-a11y-${unique}`, command: "/bin/bash", cwd: "/tmp", mode: "chat" });
+  const card = page.getByRole("button", { name: new RegExp(`pw-a11y-${unique}`) });
+  await expect(card).toHaveAttribute("aria-current", "page");
+
+  const chatMode = page.locator(".session-header").getByRole("tab", { name: "Chat" });
+  await chatMode.focus();
+  await chatMode.press("ArrowRight");
+  await expect(page.locator(".terminal-section")).toBeVisible();
+  const terminalMode = page.locator(".session-header").getByRole("tab", { name: "Terminal" });
+  await terminalMode.press("ArrowLeft");
+  await expect(page.locator(".chat-view")).toBeVisible();
+
+  await page.locator(".slash-button").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menu", { name: "Session command menu" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu", { name: "Session command menu" })).toBeHidden();
+
+  const more = await openSessionMore(page);
+  await more.getByRole("menuitem", { name: "Force kill…" }).click();
+  const confirmation = page.getByRole("dialog", { name: "Force kill session?" });
+  await expect(confirmation).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toBeHidden();
+
+  const accessibilityAudit = await page.evaluate(() => {
+    const unnamedButtons = [...document.querySelectorAll("button")].filter((button) => {
+      const label = button.getAttribute("aria-label") || button.textContent?.trim();
+      return !label;
+    }).length;
+    const unnamedFields = [...document.querySelectorAll("input:not([aria-hidden='true']), textarea")].filter((field) => {
+      const id = field.getAttribute("id");
+      const explicit = id && document.querySelector(`label[for="${CSS.escape(id)}"]`);
+      const wrapped = field.closest("label");
+      return !explicit && !wrapped && !field.getAttribute("aria-label");
+    }).length;
+
+    function rgb(value: string) {
+      const hex = value.trim().match(/^#([0-9a-f]{6})$/i)?.[1];
+      if (hex) {
+        return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)];
+      }
+      const match = value.match(/\d+/g)?.map(Number) || [0, 0, 0];
+      return match.slice(0, 3);
+    }
+    function luminance(value: number[]) {
+      const channels = value.map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    }
+    function contrast(foreground: string, background: string) {
+      const light = Math.max(luminance(rgb(foreground)), luminance(rgb(background)));
+      const dark = Math.min(luminance(rgb(foreground)), luminance(rgb(background)));
+      return (light + 0.05) / (dark + 0.05);
+    }
+
+    const root = getComputedStyle(document.documentElement);
+    return {
+      unnamedButtons,
+      unnamedFields,
+      primaryContrast: contrast(root.getPropertyValue("--color-text-primary"), root.getPropertyValue("--color-bg-canvas")),
+      secondaryContrast: contrast(root.getPropertyValue("--color-text-secondary"), root.getPropertyValue("--color-bg-surface"))
+    };
+  });
+  expect(accessibilityAudit.unnamedButtons).toBe(0);
+  expect(accessibilityAudit.unnamedFields).toBe(0);
+  expect(accessibilityAudit.primaryContrast).toBeGreaterThanOrEqual(4.5);
+  expect(accessibilityAudit.secondaryContrast).toBeGreaterThanOrEqual(4.5);
+  await expect(errors).toEqual([]);
 });
 
 test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
@@ -496,7 +611,7 @@ test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
   await login(page);
   const sessionName = `codex-qa-${Date.now()}`;
   await createSession(page, { name: sessionName, command: "codex", cwd, mode: "chat" });
-  await expect(page.locator(".adapter-badge")).toHaveText("Codex");
+  await expect(page.locator(".session-header .adapter-badge")).toHaveText(/Codex/);
   await expect(page.getByRole("button", { name: "Open Terminal" })).toBeVisible();
   await expect(page.locator(".transcript")).toContainText(/Codex is running in a terminal interface|Waiting for semantic events/);
   await expectNoChatGarbage(page.locator(".transcript"));
@@ -533,10 +648,8 @@ test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
 
   await page.getByRole("button", { name: "Interrupt" }).click();
   await page.waitForTimeout(500);
-  const terminate = page.getByRole("button", { name: "Terminate", exact: true });
-  if (await terminate.isEnabled()) {
-    page.once("dialog", (dialog) => dialog.accept());
-    await terminate.click();
+  if (await page.locator(".session-header").getByText(/running|starting/).isVisible()) {
+    await terminateCurrentSession(page);
   } else {
     await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
   }

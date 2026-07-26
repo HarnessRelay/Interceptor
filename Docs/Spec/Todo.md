@@ -544,6 +544,25 @@ Goal: create a usable browser dashboard for Stage 1 validation.
 - [x] Run approved real-harness smoke with OpenCode in a disposable `/tmp` fixture.
 - [x] Re-run `go test ./...`, `make test`, `make build`, and dashboard smoke commands after QA updates.
 
+## 10.8 Production UI Revamp
+
+- [x] Add the UI revamp plan and component specification.
+- [x] Redesign login, empty state, session manager, and creation flow.
+- [x] Add rectangular session cards with lifecycle grouping, search, adapter,
+  mode, status, and activity.
+- [x] Redesign active Chat and Terminal workspaces while preserving raw PTY
+  fallback.
+- [x] Move terminate/force kill under menus and accessible confirmation dialogs.
+- [x] Replace the debug footer with a hidden-by-default inspector drawer.
+- [x] Centralize complete color, spacing, radius, typography, motion, focus, and
+  z-index tokens.
+- [x] Add keyboard, accessible-name, focus containment, and contrast regression
+  coverage.
+- [x] Capture and review the eleven named UI revamp screenshots.
+- [x] Track and verify UIR-001 through UIR-006 in
+  `Docs/QA/UI-Revamp-QA.md`.
+- [x] Document accessibility results in `Docs/QA/Accessibility-QA.md`.
+
 ---
 
 # Phase 11 — Security Hardening

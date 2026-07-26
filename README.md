@@ -66,18 +66,22 @@ export HARNESSRELAY_TOKEN=...
 
 The dashboard supports:
 
-- session list
-- create session form with Chat or Terminal start mode
+- rectangular session cards with lifecycle grouping, search, and filters
+- detected-harness shortcuts and a keyboard-accessible New Session dialog
+- Chat or Terminal start mode plus progressive terminal/environment options
 - chat-first harness interaction view
 - xterm.js terminal fallback view
 - live WebSocket output
 - prompt composer that sends text into the PTY
-- slash-command menu for interrupt, terminate, special keys, snapshot refresh, and Terminal Mode fallback
+- keyboard-navigable slash/action menu for session actions, special keys,
+  snapshot refresh, inspector access, and Terminal Mode fallback
 - keyboard input and paste in Terminal Mode
 - resize propagation
-- interrupt, terminate, and force-kill controls
+- top-level interrupt plus terminate and force kill behind More and accessible
+  confirmation dialogs
 - reconnect by replaying recent in-memory output history
-- compact debug/event inspector
+- right-side session inspector, hidden by default, with overview, events, and
+  adapter capability tabs
 - adapter identity, capabilities, status, and metadata
 - Codex-aware prompt submission and event-bound safe denial
 
@@ -89,6 +93,12 @@ after redraw activity settles; raw TUI chunks remain exclusively in Terminal
 Mode and never appear directly in the Chat transcript.
 
 Terminal Mode preserves the xterm.js raw terminal experience for exact TUI rendering, keyboard capture, paste, resize, and fallback control.
+
+The interface is a desktop/laptop workbench. Its session manager is inspired by
+Termius, the conversation canvas by ChatGPT, and its progressive information
+architecture by JetBrains tools. Theme tokens live in
+`web/src/theme/tokens.css`; the interaction and component contracts live in
+`Docs/Design/`.
 
 The dashboard logo assets live in `web/src/assets/`. `HarnessRelay_Without_Text.png` is used for the favicon and compact app mark; `HarnessRelay_With_Text.png` is used where the full wordmark fits.
 
@@ -106,11 +116,16 @@ Dashboard smoke coverage:
 
 ```bash
 HARNESSRELAY_TOKEN=dashboard-token node qa/dashboard-smoke.mjs
+npm --prefix web run qa
+npm --prefix web run qa:a11y
 ```
 
 The smoke logs in, creates sessions in Chat Mode and Terminal Mode, sends prompt/input through both views, switches between modes, verifies reconnect snapshots, and exercises interrupt/terminate controls.
 
-The QA log is `Docs/QA/WebApp-QA.md`. The optional real-harness smoke is gated behind `HARNESSRELAY_REAL_HARNESS_SMOKE=opencode` and should only be run with explicit approval because it launches a coding harness.
+The redesign QA log is `Docs/QA/UI-Revamp-QA.md`; accessibility results are in
+`Docs/QA/Accessibility-QA.md`. The optional real-harness smoke is gated behind
+`HARNESSRELAY_REAL_HARNESS_SMOKE=opencode` and should only be run with explicit
+approval because it launches a coding harness.
 
 ## Security
 

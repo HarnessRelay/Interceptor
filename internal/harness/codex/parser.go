@@ -121,6 +121,11 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 
 	if strings.Contains(p.recent, "Would you like to run the following command?") {
 		command := parseCommand(p.recent)
+		// Codex redraws the heading before the command line. Waiting here keeps
+		// the first event-bound approval card from losing its review context.
+		if command == "" {
+			return compactEvents(out)
+		}
 		if !p.approvalOpen {
 			p.approvalOpen = true
 			out = append(out,
@@ -307,6 +312,9 @@ func parseMetadata(text, fallbackWorkDir string) (events.HarnessMetadata, bool) 
 	}
 	if match := modelPattern.FindStringSubmatch(text); len(match) == 2 {
 		metadata.Model = strings.TrimSpace(match[1])
+	}
+	if strings.EqualFold(metadata.Model, "loading") {
+		metadata.Model = ""
 	}
 	if metadata.Model == "" {
 		if match := footerModel.FindStringSubmatch(text); len(match) == 2 {

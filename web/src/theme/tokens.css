@@ -1,23 +1,84 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --bg: #080d14;
-  --bg-elevated: #0b111b;
-  --surface: #101722;
-  --surface-raised: #141c29;
-  --surface-strong: #182233;
-  --border: #263244;
-  --border-strong: #35445a;
-  --text: #f4f7fb;
-  --text-secondary: #b5c4d8;
-  --text-muted: #8ea0b8;
-  --teal: #16e0b5;
-  --cyan: #17c8f3;
-  --green: #52f28a;
-  --yellow: #ffd84d;
-  --danger: #ff6b6b;
-  --danger-surface: #351a20;
-  --focus: color-mix(in oklch, var(--teal) 36%, transparent);
-  --radius: 8px;
-  --shadow-subtle: 0 8px 24px rgb(0 0 0 / 0.24);
+
+  --color-bg-root: #070b11;
+  --color-bg-sidebar: #0b1018;
+  --color-bg-canvas: #090e15;
+  --color-bg-surface: #101721;
+  --color-bg-elevated: #151e2a;
+  --color-bg-input: #0c121b;
+  --color-bg-selected: #102722;
+  --color-bg-hover: #172230;
+  --color-bg-overlay: rgb(2 6 11 / 0.76);
+  --color-bg-danger: #32191e;
+  --color-bg-warning: #292410;
+  --color-bg-success: #10271e;
+
+  --color-border: #273345;
+  --color-border-subtle: #1b2635;
+  --color-border-strong: #3a4a61;
+  --color-border-focus: #23d7b0;
+
+  --color-text-primary: #f2f6fa;
+  --color-text-secondary: #b7c4d4;
+  --color-text-muted: #8e9db0;
+  --color-text-inverse: #04130f;
+  --color-accent-teal: #23d7b0;
+  --color-accent-cyan: #43c8ed;
+  --color-success: #4dde88;
+  --color-warning: #f1cb52;
+  --color-danger: #ff767d;
+  --color-danger-strong: #ff9297;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  --shadow-menu: 0 8px 8px rgb(0 0 0 / 0.28);
+  --shadow-dialog: 0 8px 8px rgb(0 0 0 / 0.32);
+  --focus-ring: 0 0 0 3px rgb(35 215 176 / 0.24);
+
+  --motion-fast: 140ms;
+  --motion-base: 200ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --z-menu: 20;
+  --z-sticky: 30;
+  --z-backdrop: 40;
+  --z-modal: 50;
+  --z-drawer: 35;
+
+  /* Compatibility aliases for xterm-adjacent legacy code. */
+  --bg: var(--color-bg-root);
+  --bg-elevated: var(--color-bg-canvas);
+  --surface: var(--color-bg-surface);
+  --surface-raised: var(--color-bg-elevated);
+  --surface-strong: var(--color-bg-hover);
+  --border: var(--color-border);
+  --border-strong: var(--color-border-strong);
+  --text: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --teal: var(--color-accent-teal);
+  --cyan: var(--color-accent-cyan);
+  --green: var(--color-success);
+  --yellow: var(--color-warning);
+  --danger: var(--color-danger);
+  --danger-surface: var(--color-bg-danger);
+  --radius: var(--radius-sm);
+  --focus: rgb(35 215 176 / 0.24);
 }

@@ -100,8 +100,8 @@ async function dashboardSmoke(input) {
   const createSession = async (nameValue, mode, overrides = {}) => {
     let form = document.querySelector(".create-form");
     if (!form) {
-      clickText("Manual", document.querySelector(".session-launcher"));
-      form = await waitFor(() => document.querySelector(".create-form"), "manual session form");
+      document.querySelector(".new-session-button").click();
+      form = await waitFor(() => document.querySelector(".create-form"), "new session form");
     }
     const [name, command, args, cwd] = [...form.querySelectorAll("input")];
     setValue(name, nameValue);
@@ -111,6 +111,13 @@ async function dashboardSmoke(input) {
     clickText(mode === "terminal" ? "Terminal" : "Chat", form);
     await delay(100);
     form.requestSubmit();
+  };
+  const terminateSelected = async () => {
+    document.querySelector(".session-header button[aria-label='More session actions']").click();
+    const menu = await waitFor(() => document.querySelector(".command-menu"), "session actions menu");
+    clickText("Terminate session", menu);
+    const confirm = await waitFor(() => document.querySelector(".confirm-body"), "terminate confirmation");
+    clickText("Terminate", confirm);
   };
 
   try {
@@ -122,10 +129,10 @@ async function dashboardSmoke(input) {
     }
 
     // QA-002: app shell/sidebar exposes the create-session form after auth.
-    await waitFor(() => document.querySelector(".session-launcher"), "dashboard");
+    await waitFor(() => document.querySelector(".sidebar"), "dashboard");
     if (!document.querySelector(".create-form")) {
-      clickText("Manual", document.querySelector(".session-launcher"));
-      await waitFor(() => document.querySelector(".create-form"), "manual session form");
+      document.querySelector(".new-session-button").click();
+      await waitFor(() => document.querySelector(".create-form"), "new session form");
     }
 
     // QA-003 and QA-004: create a Chat Mode session and verify composer output.
@@ -142,7 +149,7 @@ async function dashboardSmoke(input) {
       throw new Error("chat transcript did not show command output");
     }
     // QA-005: slash menu opens and action selection closes it.
-    clickText("/", document.querySelector(".composer"));
+    document.querySelector(".slash-button").click();
     await waitFor(() => document.querySelector(".slash-menu"), "slash menu");
     clickText("Refresh snapshot", document.querySelector(".slash-menu"));
     await waitFor(() => !document.querySelector(".slash-menu"), "slash menu closed");
@@ -153,7 +160,7 @@ async function dashboardSmoke(input) {
     if (!document.querySelector(".xterm-rows")) throw new Error("xterm rows missing after mode switch");
     setValue(document.querySelector(".terminal-section .raw-input textarea"), "echo terminal:" + input.terminalLine + String.fromCharCode(10));
     await delay(150);
-    clickText("Send", document.querySelector(".raw-input"));
+    clickText("Send input", document.querySelector(".raw-input"));
     await waitFor(async () => {
       const text = await snapshotText(input.chatSessionName);
       return text.includes("terminal:" + input.terminalLine) ? text : "";
@@ -167,15 +174,14 @@ async function dashboardSmoke(input) {
     await waitFor(() => document.querySelector(".terminal-section .raw-input textarea"), "new terminal session");
     setValue(document.querySelector(".terminal-section .raw-input textarea"), "echo terminal-mode:" + input.terminalModeLine + String.fromCharCode(10));
     await delay(150);
-    clickText("Send", document.querySelector(".raw-input"));
+    clickText("Send input", document.querySelector(".raw-input"));
     const terminalModeSnapshot = await waitFor(async () => {
       const text = await snapshotText(input.terminalSessionName);
       return text.includes("terminal-mode:" + input.terminalModeLine) ? text : "";
     }, "terminal mode output");
 
-    clickText("Interrupt");
-    window.confirm = () => true;
-    clickText("Terminate");
+    document.querySelector(".interrupt-button").click();
+    await terminateSelected();
     await waitFor(() => document.body.innerText.includes("terminated") || document.body.innerText.includes("exited"), "terminate status", 10000);
 
     let realHarnessSmoke = { skipped: true };
@@ -195,14 +201,13 @@ async function dashboardSmoke(input) {
       }, "real harness tui output", 15000);
       setValue(document.querySelector(".terminal-section .raw-input textarea"), input.codexPrompt + String.fromCharCode(10));
       await delay(150);
-      clickText("Send", document.querySelector(".raw-input"));
+      clickText("Send input", document.querySelector(".raw-input"));
       const promptSnapshot = await waitFor(async () => {
         const text = await snapshotText(sessionName);
         return text.includes(input.codexPrompt.slice(0, 32)) || text.length > harnessIntro.length ? text : "";
       }, "real harness prompt accepted", 15000);
-      clickText("Interrupt");
-      window.confirm = () => true;
-      clickText("Terminate");
+      document.querySelector(".interrupt-button").click();
+      await terminateSelected();
       await waitFor(() => document.body.innerText.includes("terminated") || document.body.innerText.includes("exited"), "real harness terminate status", 10000);
       realHarnessSmoke = { skipped: false, command, intro: harnessIntro.slice(0, 500), promptSnapshot: promptSnapshot.slice(0, 500) };
     }
@@ -235,7 +240,7 @@ async function reconnectSmoke(input) {
   };
   try {
     // QA-007: reload restores the session list and reconnect snapshot.
-    await waitFor(() => document.querySelector(".session-launcher"), "dashboard reconnect");
+    await waitFor(() => document.querySelector(".sidebar"), "dashboard reconnect");
     const reconnectText = await waitFor(async () => {
       if (!document.body.innerText.includes(input.chatSessionName)) return "";
       const list = await fetch("/api/v1/sessions", { credentials: "same-origin" }).then((response) => response.json());

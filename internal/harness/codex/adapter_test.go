@@ -166,6 +166,16 @@ func TestParseMetadataUsesRenderedModelFooter(t *testing.T) {
 	}
 }
 
+func TestParseMetadataIgnoresLoadingPlaceholderForRenderedModel(t *testing.T) {
+	metadata, ok := parseMetadata(
+		"OpenAI Codex (v0.145.0)\nmodel: loading\n  gpt-5.6-sol high · /tmp/project",
+		"/tmp/project",
+	)
+	if !ok || metadata.Model != "gpt-5.6-sol high" {
+		t.Fatalf("metadata = %+v, ok=%v", metadata, ok)
+	}
+}
+
 func TestParserDetectsApprovalOnceAndAllowsLaterIdenticalRequest(t *testing.T) {
 	parser := &Parser{}
 	overlay := []byte("Would you like to run the following command?\r\n$ printf safe\r\n1. Yes proceed\r\n3. No and tell Codex what to do differently")
@@ -187,6 +197,22 @@ func TestParserDetectsApprovalOnceAndAllowsLaterIdenticalRequest(t *testing.T) {
 	parser.ActionResolved("codex.approval_deny")
 	if got := parser.Process(update); eventCount(got, events.TypeApprovalRequired) != 1 {
 		t.Fatalf("identical later request did not emit once: %+v", got)
+	}
+}
+
+func TestParserWaitsForApprovalCommandContext(t *testing.T) {
+	parser := &Parser{}
+	heading := []byte("Would you like to run the following command?\r\n")
+	if got := parser.Process(harness.TerminalUpdate{Chunk: heading, Snapshot: heading, WorkDir: "/tmp/project"}); eventCount(got, events.TypeApprovalRequired) != 0 {
+		t.Fatalf("approval emitted before command context: %+v", got)
+	}
+
+	command := []byte("$ printf safe\r\n1. Yes proceed\r\n3. No and tell Codex what to do differently")
+	snapshot := append(append([]byte(nil), heading...), command...)
+	got := parser.Process(harness.TerminalUpdate{Chunk: command, Snapshot: snapshot, WorkDir: "/tmp/project"})
+	approval := eventOfType(t, got, events.TypeApprovalRequired).Data.(events.ApprovalRequired)
+	if approval.Command != "printf safe" {
+		t.Fatalf("approval command = %q", approval.Command)
 	}
 }
 

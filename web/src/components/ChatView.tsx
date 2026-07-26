@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "
 import { api } from "../api/client";
 import type { EventEnvelope, SemanticAction, SemanticEventData, Session } from "../types";
 import { decodeBase64, isLive, projectTerminalOutputForChat, terminalOutputText } from "../utils";
+import { Confirmation, ConfirmDialog } from "./ConfirmDialog";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 
 export type ChatMessage = {
@@ -22,6 +23,7 @@ export function ChatView({
   messages,
   setMessages,
   onOpenTerminal,
+  onOpenInspector,
   onSessionUpdate,
   onEvent,
   onError
@@ -31,6 +33,7 @@ export function ChatView({
   messages: ChatMessage[];
   setMessages: (sessionID: string, updater: ChatMessagesUpdater) => void;
   onOpenTerminal: () => void;
+  onOpenInspector: () => void;
   onSessionUpdate: () => void;
   onEvent: (event: EventEnvelope) => void;
   onError: (message: string) => void;
@@ -41,6 +44,8 @@ export function ChatView({
   const [activityDetail, setActivityDetail] = useState("");
   const [slashOpen, setSlashOpen] = useState(false);
   const [actionState, setActionState] = useState<Record<string, string>>({});
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const latestSeq = useRef(0);
   const activityTimer = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -246,19 +251,19 @@ export function ChatView({
     try {
       if (action === "interrupt") await api.interrupt(session.id);
       if (action === "terminate") {
-        if (!window.confirm(`Terminate ${session.name || session.command}?`)) return;
-        await api.terminate(session.id);
+        setConfirmation({ kind: "terminate", label: session.name || session.command });
+        return;
       }
       if (action === "kill") {
-        const confirmation = window.prompt(`Force kill ${session.name || session.command}? Type KILL to continue.`);
-        if (confirmation !== "KILL") return;
-        await api.kill(session.id);
+        setConfirmation({ kind: "kill", label: session.name || session.command });
+        return;
       }
       if (action === "escape") await api.key(session.id, "Escape");
       if (action === "ctrlc") await api.key(session.id, "CtrlC");
       if (action === "tab") await api.key(session.id, "Tab");
       if (action === "enter") await api.key(session.id, "Enter");
       if (action === "terminal") onOpenTerminal();
+      if (action === "inspector") onOpenInspector();
       if (action === "clear") setMessages(session.id, []);
       if (action === "snapshot") {
         if (semanticAdapter) {
@@ -277,13 +282,28 @@ export function ChatView({
     }
   }
 
+  async function confirmAction() {
+    if (!confirmation) return;
+    setConfirmBusy(true);
+    try {
+      if (confirmation.kind === "terminate") await api.terminate(session.id);
+      else await api.kill(session.id);
+      setConfirmation(null);
+      await onSessionUpdate();
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
   return (
     <section className="chat-view" aria-label="Chat mode">
       <div className="chat-main">
-        <div className="chat-status-row">
-          <span className={activityClassName(activity)}>{activityLabel(activity)}</span>
-          <span>{activityDetail || activityDescription(activity)}</span>
-          <button onClick={onOpenTerminal}>Open Terminal</button>
+        <div className="chat-status-row" role="status" aria-live="polite">
+          <span className={activityClassName(activity)}><span className="activity-dot" aria-hidden="true" />{activityLabel(activity)}</span>
+          <span className="activity-detail">{activityDetail || activityDescription(activity)}</span>
+          <button className="quiet-button" onClick={onOpenTerminal}>Open Terminal</button>
         </div>
         {semanticAdapter && metadata && (
           <div className="semantic-strip" aria-label="Codex metadata">
@@ -316,17 +336,21 @@ export function ChatView({
             </section>
           );
         })}
-        <div className="transcript" ref={transcriptRef}>
+        <div className="transcript" ref={transcriptRef} role="log" aria-label="Session conversation" aria-live="polite">
           {messages.length === 0 ? (
             <div className="message system-message">
-              {semanticAdapter
-                ? "Waiting for semantic events. Raw terminal output remains available in Terminal Mode."
-                : "Readable output will appear here as terminal chunks arrive."}
+              <span className="system-icon" aria-hidden="true">◇</span>
+              <div>
+                <strong>{semanticAdapter ? "Waiting for the harness" : "Conversation ready"}</strong>
+                <p>{semanticAdapter
+                  ? "Semantic messages will appear here. The complete live screen remains available in Terminal Mode."
+                  : "Send plain text below. If this command uses a terminal interface, open Terminal Mode for the live screen."}</p>
+              </div>
             </div>
           ) : (
             messages.map((message) => (
-              <article key={message.id} className={`message message-${message.role}`}>
-                <div className="message-role">{message.role}</div>
+              <article key={message.id} className={`message message-${message.role}`} aria-label={`${message.role} message`}>
+                <div className="message-role">{message.role === "user" ? "You" : message.role === "assistant" ? session.adapter_name || "Harness" : "HarnessRelay"}</div>
                 <pre>{message.text}</pre>
               </article>
             ))
@@ -336,13 +360,23 @@ export function ChatView({
       <form className="composer" onSubmit={submit}>
         <div className="composer-actions">
           <button type="button" className="slash-button" onClick={() => setSlashOpen((open) => !open)} aria-expanded={slashOpen}>
-            /
+            <span aria-hidden="true">/</span><span className="visually-hidden">Open session actions</span>
           </button>
-          <SlashCommandMenu open={slashOpen} onAction={runAction} />
+          <SlashCommandMenu open={slashOpen} onAction={runAction} onClose={() => setSlashOpen(false)} />
         </div>
-        <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} placeholder={semanticAdapter && !canSend ? "Waiting for the harness to become ready" : "Send input to the harness"} disabled={!canSend} />
+        <label className="composer-input">
+          <span className="visually-hidden">Message to harness</span>
+          <textarea aria-describedby="composer-hint" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} placeholder={semanticAdapter && !canSend ? "Waiting for the harness to become ready" : `Message ${session.adapter_name || "harness"}`} disabled={!canSend} />
+          <small id="composer-hint">Enter to send · Shift+Enter for a new line</small>
+        </label>
         <button className="primary-button" disabled={!canSend || prompt.trim() === ""}>Send</button>
       </form>
+      <ConfirmDialog
+        confirmation={confirmation}
+        busy={confirmBusy}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={confirmAction}
+      />
     </section>
   );
 }
