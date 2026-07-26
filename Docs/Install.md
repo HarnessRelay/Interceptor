@@ -241,7 +241,20 @@ recovery.
 
 ## Terminal recovery
 
-The shim attach client restores terminal state on daemon disconnect and
-controllable termination signals. It prints the service restart command and a
-one-invocation direct bypass. `stty sane` is documented as last-resort recovery
-for uncatchable termination such as `SIGKILL`, not expected operation.
+The shim attach client restores both termios and terminal-emulator protocol
+state on normal exit, web terminate, force kill, daemon disconnect, detach,
+EOF, and controllable signals. Protocol cleanup includes Kitty/CSI-u,
+`modifyOtherKeys`, bracketed paste, common mouse/focus modes, alternate screen,
+cursor visibility, synchronized output, and application cursor/keypad modes.
+
+On daemon loss it also prints the service restart command, a one-invocation
+direct bypass, and this recovery sequence:
+
+```bash
+printf '\033[<1u\033[>4;0m\033[?1000;1002;1003;1006l\033[?2004l'
+stty sane
+reset
+```
+
+The commands are a last resort for an uncatchable local `SIGKILL`, kernel
+failure, or power loss, not expected operation.

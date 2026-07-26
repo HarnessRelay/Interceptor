@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -eu
+
+# Simulate a full-screen harness that pushes Kitty keyboard protocol state,
+# enables other common TUI modes, and never gets to clean them up itself.
+printf '\033[?1049h'
+printf '\033[?2026h'
+printf '\033[>7u'
+printf '\033[>4;2m'
+printf '\033[?2004h'
+printf '\033[?1003h\033[?1006h\033[?1004h'
+printf '\033[?25l'
+printf 'FAKE_TUI_READY\r\n'
+trap '' TERM
+while :; do
+  sleep 1
+done

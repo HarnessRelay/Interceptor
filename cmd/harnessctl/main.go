@@ -27,6 +27,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/config"
 	"github.com/harnessrelay/interceptor/internal/service"
 	"github.com/harnessrelay/interceptor/internal/shims"
+	"github.com/harnessrelay/interceptor/internal/terminalcleanup"
 )
 
 const version = "dev"
@@ -200,6 +201,9 @@ Usage:
 }
 
 func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
+	localTerminal := &localTerminalState{writer: localProtocolWriter(stdout)}
+	defer localTerminal.Restore()
+
 	var snapshot snapshotResponse
 	if err := c.request(http.MethodGet, "/api/v1/sessions/"+id+"/snapshot", nil, &snapshot); err != nil {
 		return err
@@ -245,14 +249,14 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 
 	terminal, err := makeRaw(stdin)
 	if err == nil {
-		defer terminal.Restore()
-		stopSignals := watchTerminalSignals(terminal)
+		localTerminal.SetRaw(terminal)
+		stopSignals := watchTerminalSignals(localTerminal)
 		defer stopSignals()
 	}
 
 	ws, err := c.openWebSocket("/api/v1/ws?session_id=" + url.QueryEscape(id) + "&after_seq=" + fmt.Sprint(snapshot.LatestSequence))
 	if err != nil {
-		return disconnected(err, terminal)
+		return disconnected(err, localTerminal)
 	}
 	defer ws.Close()
 
@@ -271,11 +275,20 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 			if err == nil {
 				return nil
 			}
-			var exitErr processExitError
-			if errors.As(err, &exitErr) {
-				return err
+			var ended sessionEndedError
+			if errors.As(err, &ended) {
+				if restoreErr := localTerminal.Restore(); restoreErr != nil {
+					return fmt.Errorf("%w; terminal restore failed: %v", err, restoreErr)
+				}
+				if ended.remotelyTerminated() {
+					_, _ = fmt.Fprint(stdout, "\r\nHarnessRelay session was terminated remotely. Restored local terminal.\r\n")
+				}
+				if ended.code != 0 {
+					return processExitError{code: ended.code}
+				}
+				return nil
 			}
-			return disconnected(err, terminal)
+			return disconnected(err, localTerminal)
 		case err := <-inputErrCh:
 			if errors.Is(err, errDetach) {
 				return nil
@@ -284,9 +297,22 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 				inputErrCh = nil
 				continue
 			}
-			return disconnected(err, terminal)
+			_ = ws.Close()
+			return disconnected(err, localTerminal)
 		}
 	}
+}
+
+func localProtocolWriter(stdout io.Writer) io.Writer {
+	file, ok := stdout.(*os.File)
+	if !ok {
+		return stdout
+	}
+	var state syscall.Termios
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&state))); errno != 0 {
+		return nil
+	}
+	return file
 }
 
 func decodedSnapshot(snapshot snapshotResponse) ([]byte, error) {
@@ -373,15 +399,13 @@ func (c client) streamWebSocketOutput(conn net.Conn, id string, stdout io.Writer
 		}
 		if event.Type == "session.exited" {
 			var data struct {
-				ExitCode int `json:"exit_code"`
+				ExitCode int    `json:"exit_code"`
+				Reason   string `json:"reason"`
 			}
 			if err := json.Unmarshal(event.Data, &data); err != nil {
 				return err
 			}
-			if data.ExitCode == 0 {
-				return nil
-			}
-			return processExitError{code: data.ExitCode}
+			return sessionEndedError{code: data.ExitCode, reason: data.Reason}
 		}
 		if event.Type != "terminal.output" {
 			continue
@@ -527,6 +551,19 @@ func (e processExitError) Error() string {
 	return fmt.Sprintf("managed command exited with status %d", e.code)
 }
 
+type sessionEndedError struct {
+	code   int
+	reason string
+}
+
+func (e sessionEndedError) Error() string {
+	return fmt.Sprintf("managed session ended with status %d (%s)", e.code, e.reason)
+}
+
+func (e sessionEndedError) remotelyTerminated() bool {
+	return e.reason == "terminate" || e.reason == "kill" || e.reason == "signal"
+}
+
 type daemonDisconnectedError struct {
 	cause    error
 	restored bool
@@ -538,23 +575,25 @@ func (e daemonDisconnectedError) Error() string {
 		state = "Restored terminal."
 	}
 	return fmt.Sprintf(`HarnessRelay daemon disconnected (%v). %s
-Recovery: stty sane
+If your terminal still looks wrong, run:
+  printf '\033[<1u\033[>4;0m\033[?1000;1002;1003;1006l\033[?2004l'
+  stty sane
+  reset
 Restart: harnessctl services restart
 Bypass: HARNESSRELAY_BYPASS=1 <command>`, e.cause, state)
 }
 
 func (e daemonDisconnectedError) Unwrap() error { return e.cause }
 
-func disconnected(cause error, terminal *rawTerminal) error {
-	restored := false
-	if terminal != nil {
-		if err := terminal.Restore(); err != nil {
-			cause = fmt.Errorf("%w; terminal restore failed: %v", cause, err)
-		} else {
-			restored = true
-		}
+func disconnected(cause error, terminal *localTerminalState) error {
+	if terminal == nil {
+		return daemonDisconnectedError{cause: cause}
 	}
-	return daemonDisconnectedError{cause: cause, restored: restored}
+	if err := terminal.EmergencyRestore(); err != nil {
+		cause = fmt.Errorf("%w; terminal restore failed: %v", cause, err)
+		return daemonDisconnectedError{cause: cause}
+	}
+	return daemonDisconnectedError{cause: cause, restored: true}
 }
 
 func (c client) resizeFromTerminal(id string, stdout io.Writer) error {
@@ -596,6 +635,60 @@ type rawTerminal struct {
 	old  syscall.Termios
 	mu   sync.Mutex
 	raw  bool
+}
+
+type localTerminalState struct {
+	mu     sync.Mutex
+	raw    *rawTerminal
+	writer io.Writer
+}
+
+func (t *localTerminalState) SetRaw(raw *rawTerminal) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.raw = raw
+	t.mu.Unlock()
+}
+
+func (t *localTerminalState) Restore() error {
+	return t.restore(false)
+}
+
+func (t *localTerminalState) EmergencyRestore() error {
+	return t.restore(true)
+}
+
+func (t *localTerminalState) restore(emergency bool) error {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var termiosErr error
+	if t.raw != nil {
+		termiosErr = t.raw.Restore()
+	}
+	var protocolErr error
+	if emergency {
+		protocolErr = terminalcleanup.EmergencyResetLocalTerminal(t.writer)
+	} else {
+		protocolErr = terminalcleanup.RestoreLocalTerminal(t.writer)
+	}
+	return errors.Join(termiosErr, protocolErr)
+}
+
+func (t *localTerminalState) ReenterRaw() error {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.raw == nil {
+		return nil
+	}
+	return t.raw.ReenterRaw()
 }
 
 func makeRaw(file *os.File) (*rawTerminal, error) {
@@ -660,7 +753,7 @@ func (t *rawTerminal) ReenterRaw() error {
 	return nil
 }
 
-func watchTerminalSignals(terminal *rawTerminal) func() {
+func watchTerminalSignals(terminal *localTerminalState) func() {
 	signals := []os.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGTSTP}
 	ch := make(chan os.Signal, 1)
 	done := make(chan struct{})

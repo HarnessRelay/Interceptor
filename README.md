@@ -96,6 +96,11 @@ with `harnessctl shims status` or `harnessctl shims doctor`. Bypass one
 invocation with `HARNESSRELAY_BYPASS=1 codex`; remove shims with
 `harnessctl shims uninstall` or `harnessctl shims uninstall-all`.
 
+When an attached session exits, is terminated/force-killed from the dashboard,
+or loses the daemon, the local client restores termios and resets enhanced
+keyboard, paste, mouse/focus, cursor, synchronized-output, and alternate-screen
+protocol state.
+
 HarnessRelay never overwrites or deletes an unmanaged shim file by default and
 does not edit shell profiles automatically. See
 [Docs/Shims.md](Docs/Shims.md) for PATH setup, backend behavior, safety, and

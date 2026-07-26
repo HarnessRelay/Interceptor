@@ -14,13 +14,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/creack/pty"
+	"github.com/harnessrelay/interceptor/internal/api"
+	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/service"
+	"github.com/harnessrelay/interceptor/internal/session"
 	"github.com/harnessrelay/interceptor/internal/shims"
+	"github.com/harnessrelay/interceptor/internal/terminalcleanup"
 )
 
 func TestStatusCommand(t *testing.T) {
@@ -169,7 +176,7 @@ func TestAttachReplaysFinalSnapshotForFastExitedSession(t *testing.T) {
 	if err := c.attach("ses_fast", nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "fast-output\r\n" {
+	if out.String() != "fast-output\r\n"+terminalcleanup.RestoreSequence {
 		t.Fatalf("output = %q", out.String())
 	}
 }
@@ -235,13 +242,29 @@ func TestRawTerminalSignalHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer raw.Restore()
-	stop := watchTerminalSignals(raw)
+	stop := watchTerminalSignals(&localTerminalState{raw: raw, writer: os.Stdout})
 	defer stop()
 	fmt.Println("READY")
 	select {}
 }
 
-func TestTerminationSignalRestoresRawTerminal(t *testing.T) {
+func TestTerminationSignalsRestoreRawTerminal(t *testing.T) {
+	for _, signalTest := range []struct {
+		name   string
+		signal syscall.Signal
+	}{
+		{name: "SIGHUP", signal: syscall.SIGHUP},
+		{name: "SIGINT", signal: syscall.SIGINT},
+		{name: "SIGQUIT", signal: syscall.SIGQUIT},
+		{name: "SIGTERM", signal: syscall.SIGTERM},
+	} {
+		t.Run(signalTest.name, func(t *testing.T) {
+			testTerminationSignalRestoresRawTerminal(t, signalTest.signal)
+		})
+	}
+}
+
+func testTerminationSignalRestoresRawTerminal(t *testing.T, terminationSignal syscall.Signal) {
 	master, terminalFile, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
@@ -260,24 +283,32 @@ func TestTerminationSignalRestoresRawTerminal(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || strings.TrimSpace(line) != "READY" {
+	reader := bufio.NewReader(stdout)
+	if line, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(line) != "READY" {
 		t.Fatalf("helper readiness = %q, %v", line, err)
 	}
 	during := terminalState(t, terminalFile)
 	if during.Lflag&syscall.ICANON != 0 || during.Lflag&syscall.ECHO != 0 {
 		t.Fatalf("helper did not enter raw mode: lflag=%#x", during.Lflag)
 	}
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := cmd.Process.Signal(terminationSignal); err != nil {
 		t.Fatal(err)
+	}
+	cleanupOutput, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal(readErr)
 	}
 	err = cmd.Wait()
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("helper exit = %v, want signal exit", err)
 	}
+	if !bytes.Contains(cleanupOutput, []byte(terminalcleanup.RestoreSequence)) {
+		t.Fatalf("signal output missing protocol cleanup: %q", cleanupOutput)
+	}
 	after := terminalState(t, terminalFile)
 	if after != before {
-		t.Fatalf("SIGTERM left terminal changed\nbefore=%+v\nafter=%+v", before, after)
+		t.Fatalf("%s left terminal changed\nbefore=%+v\nafter=%+v", terminationSignal, before, after)
 	}
 }
 
@@ -319,20 +350,206 @@ func TestAttachRestoresTerminalAndReportsDaemonDisconnect(t *testing.T) {
 	defer server.Close()
 
 	c := client{baseURL: server.URL, http: server.Client()}
-	err = c.attach("ses_disconnect", terminalFile, io.Discard)
+	var out bytes.Buffer
+	err = c.attach("ses_disconnect", terminalFile, &out)
 	var disconnect daemonDisconnectedError
 	if !errors.As(err, &disconnect) {
 		t.Fatalf("attach error = %v, want daemonDisconnectedError", err)
 	}
-	for _, wanted := range []string{"Restored terminal.", "stty sane", "harnessctl services restart", "HARNESSRELAY_BYPASS=1"} {
+	for _, wanted := range []string{"Restored terminal.", "printf '\\033[<1u", "stty sane", "reset", "harnessctl services restart", "HARNESSRELAY_BYPASS=1"} {
 		if !strings.Contains(err.Error(), wanted) {
 			t.Fatalf("disconnect error missing %q: %v", wanted, err)
 		}
+	}
+	if !bytes.Contains(out.Bytes(), []byte(terminalcleanup.RestoreSequence)) {
+		t.Fatalf("daemon disconnect output missing protocol cleanup: %q", out.Bytes())
 	}
 	after := terminalState(t, terminalFile)
 	if after != before {
 		t.Fatalf("daemon disconnect left terminal changed\nbefore=%+v\nafter=%+v", before, after)
 	}
+}
+
+func TestAttachDetachRestoresTerminalProtocols(t *testing.T) {
+	server := newOpenAttachServer(t, "ses_detach")
+	defer server.Close()
+
+	master, terminalFile, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer terminalFile.Close()
+	before := terminalState(t, terminalFile)
+	if _, err := master.Write([]byte{0x1d}); err != nil {
+		t.Fatal(err)
+	}
+
+	c := client{baseURL: server.URL, http: server.Client()}
+	var out bytes.Buffer
+	if err := c.attach("ses_detach", terminalFile, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(terminalcleanup.RestoreSequence)) {
+		t.Fatalf("detach output missing protocol cleanup: %q", out.Bytes())
+	}
+	after := terminalState(t, terminalFile)
+	if after != before {
+		t.Fatalf("detach left termios changed\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func newOpenAttachServer(t *testing.T, sessionID string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sessions/" + sessionID + "/snapshot":
+			_ = json.NewEncoder(w).Encode(map[string]any{"latest_seq": 0, "chunks": []any{}})
+		case "/api/v1/sessions/" + sessionID:
+			_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{
+				"id": sessionID, "status": "running",
+			}})
+		case "/api/v1/sessions/" + sessionID + "/resize":
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v1/ws":
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("server does not support hijacking")
+			}
+			conn, rw, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = fmt.Fprint(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test\r\n\r\n")
+			_ = rw.Flush()
+			_, _ = io.Copy(io.Discard, conn)
+			_ = conn.Close()
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+}
+
+func TestShimAttachRemoteStopCleansFakeKittyProtocol(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{name: "terminate", path: "terminate", body: map[string]any{"grace_ms": 200}},
+		{name: "force_kill", path: "kill", body: map[string]any{"confirmation": "KILL"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testShimAttachRemoteStopCleansFakeKittyProtocol(t, test.path, test.body)
+		})
+	}
+}
+
+func testShimAttachRemoteStopCleansFakeKittyProtocol(t *testing.T, action string, body map[string]any) {
+	bus := events.NewBus()
+	manager := session.NewManagerWithBus(bus)
+	auth := security.NewAuthenticator("test-token")
+	server := httptest.NewServer(api.NewRouter(api.Options{
+		Sessions: manager,
+		Events:   bus,
+		Auth:     auth,
+	}))
+	defer server.Close()
+
+	fakeHarness, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake-harnesses", "fake-kitty-protocol-harness"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := client{
+		baseURL: server.URL,
+		token:   "test-token",
+		http:    server.Client(),
+	}
+	managed, err := c.createShimSession("fake-kitty-protocol-harness", shims.Entry{
+		Harness:    "fake-kitty-protocol-harness",
+		RealBinary: fakeHarness,
+		Backend:    shims.BackendPTY,
+	}, nil, 24, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	master, terminalFile, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer terminalFile.Close()
+	before := terminalState(t, terminalFile)
+
+	var out lockedBuffer
+	attachDone := make(chan error, 1)
+	go func() {
+		attachDone <- c.attach(managed.ID, terminalFile, &out)
+	}()
+	waitForBufferText(t, &out, "FAKE_TUI_READY", 5*time.Second)
+
+	if err := c.request(http.MethodPost, "/api/v1/sessions/"+managed.ID+"/"+action, body, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case attachErr := <-attachDone:
+		var exitErr processExitError
+		if attachErr != nil && !errors.As(attachErr, &exitErr) {
+			t.Fatalf("attach error = %v", attachErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("attach did not exit after remote %s", action)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "\x1b[>7u") {
+		t.Fatalf("fake harness did not enable Kitty protocol: %q", output)
+	}
+	if !strings.Contains(output, terminalcleanup.RestoreSequence) {
+		t.Fatalf("remote %s did not emit protocol cleanup: %q", action, output)
+	}
+	if !strings.Contains(output, "HarnessRelay session was terminated remotely. Restored local terminal.") {
+		t.Fatalf("remote %s notice missing: %q", action, output)
+	}
+	after := terminalState(t, terminalFile)
+	if after != before {
+		t.Fatalf("remote %s left termios changed\nbefore=%+v\nafter=%+v", action, before, after)
+	}
+	info, ok := manager.Get(managed.ID)
+	if !ok || info.Info().Status != session.StatusTerminated {
+		t.Fatalf("session status = %v, found=%v", info, ok)
+	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
+}
+
+func waitForBufferText(t *testing.T, buffer *lockedBuffer, wanted string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buffer.String(), wanted) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("buffer did not contain %q: %q", wanted, buffer.String())
 }
 
 func terminalState(t *testing.T, file *os.File) syscall.Termios {

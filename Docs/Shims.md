@@ -130,10 +130,16 @@ Detach the local terminal with `Ctrl-]`. Detaching does not terminate the
 daemon-owned session.
 
 If the daemon dies, the local attach client treats the lost WebSocket as a
-failure, restores the controlling terminal synchronously, prints service
-restart/direct-bypass guidance, and exits non-zero. `stty sane` is backup
-recovery only. External termination and suspend handling also restore the
-terminal before the process exits or stops.
+failure, restores the controlling terminal synchronously, emits local
+terminal-protocol cleanup, prints service restart/direct-bypass guidance, and
+exits non-zero. External termination, force kill, detach, EOF, controllable
+signals, and suspend handling use the same repeat-safe cleanup path.
+
+The cleanup restores termios and resets Kitty/CSI-u keyboard state,
+`modifyOtherKeys`, bracketed paste, common mouse/focus modes, cursor visibility,
+application cursor/keypad modes, synchronized output, and the alternate screen.
+It is written to the user's local terminal, not the daemon PTY, and does not
+rely on the harness process surviving long enough to clean itself up.
 
 ## Backends
 
@@ -246,6 +252,17 @@ Common fixes:
 - moved `harnessctl`: run `harnessctl shims reshim`.
 - `harnessctl: command not found`: install HarnessRelay and add
   `~/.local/bin` to PATH before diagnosing shim PATH.
+- terminal still emits CSI-u text after an uncatchable failure: run:
+
+  ```bash
+  printf '\033[<1u\033[>4;0m\033[?1000;1002;1003;1006l\033[?2004l'
+  stty sane
+  reset
+  ```
+
+  Normal web terminate, force kill, disconnect, detach, and signal paths emit
+  this protocol cleanup automatically. `SIGKILL` of the local attach process,
+  kernel failure, and power loss cannot be handled by any process.
 
 ## Current Limitations
 

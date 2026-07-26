@@ -129,6 +129,7 @@ type Session struct {
 	semanticStatus    string
 	semanticIdleTimer *time.Timer
 	pendingAction     *pendingSemanticAction
+	requestedExit     string
 	outputDone        chan struct{}
 
 	publish func(typ events.Type, data any) events.Event
@@ -705,6 +706,9 @@ func (m *Manager) Terminate(ctx context.Context, id string) error {
 	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
 		return fmt.Errorf("session: session %q is %s", id, st)
 	}
+	s.mu.Lock()
+	s.requestedExit = "terminate"
+	s.mu.Unlock()
 	if err := s.runtime.Terminate(ctx); err != nil {
 		return err
 	}
@@ -723,6 +727,9 @@ func (m *Manager) Kill(id string) error {
 	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
 		return fmt.Errorf("session: session %q is %s", id, st)
 	}
+	s.mu.Lock()
+	s.requestedExit = "kill"
+	s.mu.Unlock()
 	return s.runtime.Kill()
 }
 
@@ -946,6 +953,9 @@ func (s *Session) wait() {
 	s.flushSemanticOnExit()
 
 	now := time.Now()
+	s.mu.RLock()
+	requestedExit := s.requestedExit
+	s.mu.RUnlock()
 
 	if err == nil {
 		code := 0
@@ -953,11 +963,17 @@ func (s *Session) wait() {
 		s.ExitedAt = &now
 		s.ExitCode = &code
 		s.mu.Unlock()
-		s.setStatus(StatusExited)
+		finalStatus := StatusExited
+		reason := "process_exit"
+		if requestedExit != "" {
+			finalStatus = StatusTerminated
+			reason = requestedExit
+		}
+		s.setStatus(finalStatus)
 		if s.publish != nil {
 			s.publish(events.TypeSessionExited, events.SessionExited{
 				ExitCode: 0,
-				Reason:   "process_exit",
+				Reason:   reason,
 			})
 		}
 		return
@@ -972,6 +988,11 @@ func (s *Session) wait() {
 		} else {
 			finalStatus = StatusExited
 		}
+		reason := signalReason(finalStatus)
+		if requestedExit != "" {
+			finalStatus = StatusTerminated
+			reason = requestedExit
+		}
 		s.mu.Lock()
 		s.ExitedAt = &now
 		s.ExitCode = &code
@@ -980,7 +1001,7 @@ func (s *Session) wait() {
 		if s.publish != nil {
 			s.publish(events.TypeSessionExited, events.SessionExited{
 				ExitCode: code,
-				Reason:   signalReason(finalStatus),
+				Reason:   reason,
 			})
 		}
 		return

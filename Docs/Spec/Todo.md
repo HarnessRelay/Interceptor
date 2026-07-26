@@ -930,6 +930,12 @@ and remove manual daemon startup from the normal workflow.
 - [x] Restore terminal state on daemon disconnect and controllable signals.
 - [x] Report daemon loss, recovery, service restart, and direct bypass clearly.
 - [x] Add automated pseudo-terminal daemon-death regression coverage.
+- [x] Restore Kitty/CSI-u, modifyOtherKeys, paste, mouse/focus, cursor, keypad,
+  synchronized-output, and alternate-screen protocol state at the local
+  terminal boundary.
+- [x] Classify web terminate and force kill in `session.exited` so attached
+  clients perform cleanup and report remote termination.
+- [x] Add fake enhanced-keyboard harness coverage for terminate and force kill.
 
 ## 19.4 Finished history and semantic limits
 

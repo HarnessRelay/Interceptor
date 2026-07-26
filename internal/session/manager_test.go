@@ -1211,7 +1211,7 @@ func TestManagerWithBusPublishesSessionExited(t *testing.T) {
 	}
 }
 
-func TestManagerWithBusTerminatePublishesSignalReason(t *testing.T) {
+func TestManagerWithBusTerminatePublishesRequestedReason(t *testing.T) {
 	bus := events.NewBus()
 	sub := bus.Subscribe(events.SubscribeOptions{
 		Buffer: 32,
@@ -1246,8 +1246,8 @@ func TestManagerWithBusTerminatePublishesSignalReason(t *testing.T) {
 	if !ok {
 		t.Fatalf("session.exited Data type = %T", ev.Data)
 	}
-	if d.Reason != "signal" {
-		t.Fatalf("session.exited Reason = %q, want signal", d.Reason)
+	if d.Reason != "terminate" {
+		t.Fatalf("session.exited Reason = %q, want terminate", d.Reason)
 	}
 }
 
