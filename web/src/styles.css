@@ -505,7 +505,7 @@ kbd {
 .session-card {
   display: grid;
   width: 100%;
-  min-height: 102px;
+  min-height: 122px;
   gap: 8px;
   border-color: var(--color-border-subtle);
   border-radius: var(--radius-md);
@@ -544,7 +544,8 @@ kbd {
   white-space: nowrap;
 }
 
-.session-card-command {
+.session-card-command,
+.session-card-path {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-muted);
@@ -554,8 +555,13 @@ kbd {
   white-space: nowrap;
 }
 
+.session-card-path {
+  font-family: var(--font-sans);
+}
+
 .session-card-meta {
   gap: 6px;
+  overflow: hidden;
 }
 
 .session-card-meta time {

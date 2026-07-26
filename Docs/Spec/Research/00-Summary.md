@@ -8,6 +8,10 @@ Cross-harness architecture work is documented in:
 - `11-Cross-Harness-Capability-Research.md`
 - `12-Permission-Approval-Model.md`
 
+Transparent command shim research and its PTY/direct-first backend decision are
+documented in `13-CLI-Shim-Proxy-Mode.md`. The normative CLI taxonomy is
+`Docs/Architecture/Command-Nomenclature.md`.
+
 The PTY remains the universal source-of-truth base. Official structured
 interfaces such as Codex app-server, OpenCode OpenAPI/SSE, and Grok ACP or
 streaming JSON are adapter-specific higher layers that normalize into common

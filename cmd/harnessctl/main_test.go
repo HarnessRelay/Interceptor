@@ -8,8 +8,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/harnessrelay/interceptor/internal/shims"
 )
 
 func TestStatusCommand(t *testing.T) {
@@ -78,6 +83,63 @@ func TestStreamAttachInputDetach(t *testing.T) {
 	}
 }
 
+func TestAttachReplaysFinalSnapshotForFastExitedSession(t *testing.T) {
+	var snapshotCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sessions/ses_fast/snapshot":
+			snapshotCalls++
+			payload := ""
+			if snapshotCalls > 1 {
+				payload = "ZmFzdC1vdXRwdXQNCg=="
+			}
+			chunks := []map[string]any{}
+			if payload != "" {
+				chunks = append(chunks, map[string]any{"encoding": "base64", "bytes": payload})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"latest_seq": snapshotCalls, "chunks": chunks})
+		case "/api/v1/sessions/ses_fast":
+			zero := 0
+			_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{
+				"id": "ses_fast", "status": "exited", "exit_code": zero,
+			}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	c := client{baseURL: server.URL, http: server.Client()}
+	var out bytes.Buffer
+	if err := c.attach("ses_fast", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "fast-output\r\n" {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestAttachReturnsManagedExitCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sessions/ses_failed/snapshot":
+			_ = json.NewEncoder(w).Encode(map[string]any{"latest_seq": 2, "chunks": []any{}})
+		case "/api/v1/sessions/ses_failed":
+			_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{
+				"id": "ses_failed", "status": "exited", "exit_code": 7,
+			}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	c := client{baseURL: server.URL, http: server.Client()}
+	err := c.attach("ses_failed", nil, &bytes.Buffer{})
+	var exitErr processExitError
+	if !errors.As(err, &exitErr) || exitErr.code != 7 {
+		t.Fatalf("error = %v, want process exit 7", err)
+	}
+}
+
 func TestRunCommandUsesBearerTokenAndPayload(t *testing.T) {
 	var sawAuth bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -115,5 +177,231 @@ func TestRunCommandUsesBearerTokenAndPayload(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "ses_test") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestCreateShimSessionPreservesArgsCwdEnvAndOrigin(t *testing.T) {
+	root := t.TempDir()
+	oldCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldCWD) }()
+	t.Setenv("SHIM_SESSION_ENV", "preserved")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Command       string            `json:"command"`
+			Args          []string          `json:"args"`
+			CWD           string            `json:"cwd"`
+			Env           map[string]string `json:"env"`
+			Origin        string            `json:"origin"`
+			OriginBackend string            `json:"origin_backend"`
+			ShimName      string            `json:"shim_name"`
+			RealBinary    string            `json:"real_binary"`
+			Attachable    bool              `json:"attachable"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Command != "/opt/fake" || strings.Join(body.Args, ",") != "one,two" ||
+			body.CWD != root || body.Env["SHIM_SESSION_ENV"] != "preserved" ||
+			body.Origin != "shim" || body.OriginBackend != "pty" ||
+			body.ShimName != "fake" || body.RealBinary != "/opt/fake" || !body.Attachable {
+			t.Fatalf("shim create body = %+v", body)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{"id": "ses_shim", "status": "running", "command": "/opt/fake"}})
+	}))
+	defer server.Close()
+	c := client{baseURL: server.URL, http: server.Client()}
+	if _, err := c.createShimSession("fake", shims.Entry{Harness: "fake", RealBinary: "/opt/fake"}, []string{"one", "two"}, 40, 120); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShimsLifecycleCommands(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	shimDir := filepath.Join(root, "shims")
+	configPath := filepath.Join(root, "config", "shims.json")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(realDir, "fakeharness")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HARNESSRELAY_SHIMS_CONFIG", configPath)
+	t.Setenv("HARNESSRELAY_SHIMS_DIR", shimDir)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+realDir)
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer health.Close()
+	t.Setenv("HARNESSRELAY_ADDR", health.URL)
+
+	var out, stderr bytes.Buffer
+	if err := run([]string{"shims", "install", "fakeharness"}, &out, &stderr); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if !strings.Contains(out.String(), "installed fakeharness") {
+		t.Fatalf("install output = %q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"shims", "list"}, &out, &stderr); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out.String(), "fakeharness\tinstalled") {
+		t.Fatalf("list output = %q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"shims", "path"}, &out, &stderr); err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != shimDir {
+		t.Fatalf("path output = %q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"shims", "status"}, &out, &stderr); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out.String(), "fakeharness\tactive\tpty") {
+		t.Fatalf("status output = %q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"shims", "doctor"}, &out, &stderr); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if !strings.Contains(out.String(), "[ok] fakeharness PATH order") || !strings.Contains(out.String(), "[ok] daemon reachable") {
+		t.Fatalf("doctor output = %q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"shims", "reshim"}, &out, &stderr); err != nil {
+		t.Fatalf("reshim: %v", err)
+	}
+	if err := run([]string{"shims", "uninstall", "fakeharness"}, &out, &stderr); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(shimDir, "fakeharness")); !os.IsNotExist(err) {
+		t.Fatalf("shim still exists: %v", err)
+	}
+	if err := run([]string{"shims", "install", "fakeharness"}, &out, &stderr); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	if err := run([]string{"shims", "uninstall-all"}, &out, &stderr); err != nil {
+		t.Fatalf("uninstall-all: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(shimDir, "fakeharness")); !os.IsNotExist(err) {
+		t.Fatalf("shim still exists after uninstall-all: %v", err)
+	}
+}
+
+func TestShimsInstallAllKnownUsesOnlyDetectedTargets(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	shimDir := filepath.Join(root, "shims")
+	configPath := filepath.Join(root, "shims.json")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"codex", "opencode", "grok"} {
+		if err := os.WriteFile(filepath.Join(realDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HARNESSRELAY_SHIMS_CONFIG", configPath)
+	t.Setenv("HARNESSRELAY_SHIMS_DIR", shimDir)
+	t.Setenv("PATH", realDir)
+	var out bytes.Buffer
+	if err := run([]string{"shims", "install", "--all-known"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"codex", "opencode", "grok"} {
+		if _, err := os.Stat(filepath.Join(shimDir, name)); err != nil {
+			t.Fatalf("%s shim: %v", name, err)
+		}
+	}
+}
+
+func TestShimExecDirectHelper(t *testing.T) {
+	if os.Getenv("HARNESSRELAY_TEST_SHIM_EXEC") != "1" {
+		return
+	}
+	if err := run([]string{"shim", "exec", "fakeharness", "--", "one", "two"}, os.Stdout, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShimExecBypassPreservesArgsCwdEnvAndExitCode(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config", "shims.json")
+	shimDir := filepath.Join(root, "shims")
+	real := filepath.Join(root, "fakeharness")
+	script := "#!/bin/sh\nprintf 'args=%s,%s cwd=%s env=%s\\n' \"$1\" \"$2\" \"$PWD\" \"$SHIM_TEST_ENV\"\nexit 7\n"
+	if err := os.WriteFile(real, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := shims.NewConfig(shimDir)
+	cfg.Entries["fakeharness"] = shims.Entry{
+		Enabled: true, ShimPath: filepath.Join(shimDir, "fakeharness"),
+		RealBinary: real, Harness: "fakeharness", Backend: shims.BackendPTY,
+		CreatedBy: "harnessrelay",
+	}
+	if err := shims.Save(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestShimExecDirectHelper")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"HARNESSRELAY_TEST_SHIM_EXEC=1",
+		"HARNESSRELAY_BYPASS=1",
+		"HARNESSRELAY_SHIMS_CONFIG="+configPath,
+		"SHIM_TEST_ENV=preserved",
+	)
+	output, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("exit error = %v, output = %s", err, output)
+	}
+	want := "args=one,two cwd=" + root + " env=preserved"
+	if !strings.Contains(string(output), want) {
+		t.Fatalf("output = %q, want %q", string(output), want)
+	}
+}
+
+func TestShimExecFallsBackToDirectWhenDaemonUnavailable(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config", "shims.json")
+	shimDir := filepath.Join(root, "shims")
+	real := filepath.Join(root, "fakeharness")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\nprintf 'fallback:%s\\n' \"$1\"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := shims.NewConfig(shimDir)
+	cfg.Entries["fakeharness"] = shims.Entry{
+		Enabled: true, ShimPath: filepath.Join(shimDir, "fakeharness"),
+		RealBinary: real, Harness: "fakeharness", Backend: shims.BackendPTY,
+		CreatedBy: "harnessrelay",
+	}
+	if err := shims.Save(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestShimExecDirectHelper")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"HARNESSRELAY_TEST_SHIM_EXEC=1",
+		"HARNESSRELAY_ADDR=http://127.0.0.1:1",
+		"HARNESSRELAY_SHIMS_CONFIG="+configPath,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fallback error = %v, output = %s", err, output)
+	}
+	if !strings.Contains(string(output), "daemon unavailable") || !strings.Contains(string(output), "fallback:one") {
+		t.Fatalf("fallback output = %q", string(output))
 	}
 }

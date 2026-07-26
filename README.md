@@ -62,6 +62,31 @@ export HARNESSRELAY_TOKEN=...
 
 `harnessctl attach` replays the current snapshot, streams live output, forwards local keyboard input, forwards local terminal resize, and detaches with `Ctrl-]`.
 
+### Transparent command shims
+
+Install user-local shims, prepend their directory to PATH, then keep using the
+normal harness commands:
+
+```bash
+./bin/harnessctl shims install codex opencode grok
+export PATH="$HOME/.local/share/harnessrelay/shims:$PATH"
+
+codex
+opencode
+grok
+```
+
+The default shim backend creates a daemon-owned PTY session, attaches the local
+terminal, and exposes the same session in the dashboard. Check configuration
+with `harnessctl shims status` or `harnessctl shims doctor`. Bypass one
+invocation with `HARNESSRELAY_BYPASS=1 codex`; remove shims with
+`harnessctl shims uninstall` or `harnessctl shims uninstall-all`.
+
+HarnessRelay never overwrites or deletes an unmanaged shim file by default and
+does not edit shell profiles automatically. See
+[Docs/Shims.md](Docs/Shims.md) for PATH setup, backend behavior, safety, and
+troubleshooting.
+
 ## Dashboard
 
 The dashboard supports:
@@ -165,6 +190,10 @@ Fake harnesses live under `testdata/fake-harnesses/` and cover plain output, int
 - [Docs/Spec/Todo.md](Docs/Spec/Todo.md): active implementation checklist
 - [Docs/API.md](Docs/API.md): REST and WebSocket API
 - [Docs/Developer.md](Docs/Developer.md): project structure, tests, adapters, and fake harnesses
+- [Docs/Shims.md](Docs/Shims.md): transparent command shim installation,
+  runtime, fallback, safety, and troubleshooting
+- [Docs/Architecture/Command-Nomenclature.md](Docs/Architecture/Command-Nomenclature.md):
+  normative CLI resource/verb taxonomy
 - [Docs/Semantic-Adapters.md](Docs/Semantic-Adapters.md): adapter contracts,
   capabilities, semantic events, action safety, Codex behavior, and extension
   guidance

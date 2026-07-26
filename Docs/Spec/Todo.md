@@ -832,6 +832,46 @@ Goal: keep common behavior adapter-neutral and prove cross-harness extension.
 
 # New Task Template
 
+# Phase 17 — Transparent CLI Shim Mode
+
+Goal: make normal harness commands create attachable HarnessRelay sessions
+through reversible user-local shims.
+
+## 17.1 Research and Command Architecture
+
+- [x] Research Volta, pyenv, mise, asdf, PATH/shim regeneration, diagnostics,
+  uninstall safety, tmux, and the existing managed PTY attach path.
+- [x] Create the normative command nomenclature guideline before implementation.
+
+## 17.2 Shim Filesystem and CLI
+
+- [x] Add versioned user-local shim config and XDG-aware paths.
+- [x] Add safe real-binary resolution and recursion prevention.
+- [x] Add `harnessctl shims install`, `uninstall`, `uninstall-all`, `list`,
+  `status`, `doctor`, `reshim`, and `path`.
+- [x] Refuse unmanaged overwrite/delete by default.
+- [x] Generate small auditable scripts through `harnessctl shim exec`.
+
+## 17.3 Runtime and Metadata
+
+- [x] Preserve args, cwd, environment, terminal size, and exit code.
+- [x] Add `HARNESSRELAY_BYPASS=1` and warned direct daemon fallback.
+- [x] Use the daemon-owned PTY as the initial relay backend.
+- [x] Document tmux registration as deferred and diagnose/fallback honestly.
+- [x] Add generic shim origin/backend/real-binary/attachable session metadata.
+- [x] Show minimal shim context in the session rail, header, and inspector.
+
+## 17.4 QA and Documentation
+
+- [x] Add unit/CLI/API tests with temporary fake harnesses and paths.
+- [x] Add browser coverage for shim origin metadata and Terminal fallback.
+- [x] Add `Docs/Shims.md` and `Docs/QA/Shims-QA.md`.
+- [x] Update README, API, developer, research summary, and Todo documentation.
+- [x] Run full Go, Make, frontend build, Playwright QA, and legacy dashboard
+  smoke gates.
+- [x] Safely validate fake shim execution and installed Codex/OpenCode/Grok
+  resolution without changing the real user shell profile.
+
 Use this template when adding new tasks.
 
 ```md

@@ -98,6 +98,55 @@ test("Screen 3: Create Session", async ({ page }) => {
   await expect(unexpectedErrors(errors)).toEqual([]);
 });
 
+test("Shim session origin is visible without obscuring Terminal fallback", async ({ page }) => {
+  const errors = await consoleErrors(page);
+  await login(page);
+  const sessionName = `pw-shim-${Date.now()}`;
+  const status = await page.evaluate(async (name) => {
+    const auth = await fetch("/api/v1/auth/status", { credentials: "same-origin" }).then((response) => response.json()) as {
+      csrf_token?: string;
+    };
+    const response = await fetch("/api/v1/sessions", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": auth.csrf_token || ""
+      },
+      body: JSON.stringify({
+        name,
+        harness_type: "fakeharness",
+        command: "/bin/echo",
+        args: ["shim-session-ok"],
+        cwd: "/tmp",
+        terminal: { rows: 24, cols: 80 },
+        origin: "shim",
+        origin_backend: "pty",
+        shim_name: "fakeharness",
+        real_binary: "/bin/echo",
+        attachable: true
+      })
+    });
+    return response.status;
+  }, sessionName);
+  expect(status).toBe(201);
+
+  await page.getByRole("button", { name: "Refresh sessions" }).click();
+  await selectSession(page, sessionName);
+  await expect(page.locator(".session-header")).toContainText("Shim · pty");
+  await expect(page.getByRole("button", { name: new RegExp(sessionName) })).toContainText("Shim");
+  await page.getByRole("button", { name: "More session actions" }).click();
+  await page.getByRole("menuitem", { name: "Open inspector" }).click();
+  const inspector = page.getByRole("complementary", { name: "Session inspector" });
+  await expect(inspector).toContainText("HarnessRelay shim");
+  await expect(inspector).toContainText("fakeharness");
+  await expect(inspector).toContainText("/bin/echo");
+  await inspector.getByRole("button", { name: "Close inspector" }).click();
+  await page.getByRole("tab", { name: "Terminal" }).click();
+  await expect(page.locator(".terminal-section")).toBeVisible();
+  await expect(unexpectedErrors(errors)).toEqual([]);
+});
+
 test("Screen 4: Chat Mode with simple shell", async ({ page }) => {
   const errors = await consoleErrors(page);
   await login(page);

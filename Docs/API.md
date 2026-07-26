@@ -79,6 +79,23 @@ Session responses include the selected adapter:
 }
 ```
 
+Shim-launched managed sessions add generic origin metadata:
+
+```json
+{
+  "origin": "shim",
+  "origin_backend": "pty",
+  "shim_name": "codex",
+  "real_binary": "/home/user/.local/bin/codex",
+  "attachable": true
+}
+```
+
+These are additive session fields. `origin` is omitted for ordinary explicit
+session creation. Direct shim bypass/fallback creates no session. The initial
+accepted shim session backend is `pty`; `tmux` is reserved for the documented
+future daemon-owned backend.
+
 Input:
 
 ```json

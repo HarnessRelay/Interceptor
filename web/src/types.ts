@@ -18,6 +18,11 @@ export type Session = {
   updated_at: string;
   exited_at?: string;
   exit_code?: number;
+  origin?: "shim" | string;
+  origin_backend?: "pty" | "tmux" | "direct" | string;
+  shim_name?: string;
+  real_binary?: string;
+  attachable: boolean;
 };
 
 export type EventEnvelope = {

@@ -78,6 +78,11 @@ type SessionCreated struct {
 	WorkDir             string    `json:"cwd"`
 	Status              string    `json:"status"`
 	StartedAt           time.Time `json:"created_at"`
+	Origin              string    `json:"origin,omitempty"`
+	OriginBackend       string    `json:"origin_backend,omitempty"`
+	ShimName            string    `json:"shim_name,omitempty"`
+	RealBinary          string    `json:"real_binary,omitempty"`
+	Attachable          bool      `json:"attachable"`
 }
 
 // ErrorPayload carries error details.

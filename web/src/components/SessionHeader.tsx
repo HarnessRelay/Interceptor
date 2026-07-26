@@ -115,6 +115,7 @@ export function SessionHeader({
           </div>
           <div className="session-context">
             <AdapterBadge id={session.adapter_id} name={session.adapter_name} semantic={semantic} />
+            {session.origin === "shim" && <span className="metadata-chip">Shim · {session.origin_backend || "PTY"}</span>}
             {model && <span className="metadata-chip">Model {model}</span>}
             <span className="command-summary" title={commandLine(session.command, session.args)}>{commandLine(session.command, session.args)}</span>
             <span className="path-summary" title={session.cwd || "Daemon working directory"}>{session.cwd || "Daemon working directory"}</span>

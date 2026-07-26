@@ -93,6 +93,11 @@ export function EventInspector({
             </div>
             <Metadata label="Command" value={commandLine(session.command, session.args)} code />
             <Metadata label="Working directory" value={session.cwd || "Daemon working directory"} code />
+            {session.origin && <Metadata label="Origin" value={session.origin === "shim" ? "HarnessRelay shim" : session.origin} />}
+            {session.origin_backend && <Metadata label="Origin backend" value={session.origin_backend} />}
+            {session.shim_name && <Metadata label="Shim name" value={session.shim_name} code />}
+            {session.real_binary && <Metadata label="Real binary" value={session.real_binary} code />}
+            <Metadata label="Attachable" value={session.attachable ? "Yes" : "No"} />
             <Metadata label="Terminal" value={`${session.terminal.rows} rows × ${session.terminal.cols} columns`} />
             <Metadata label="Session ID" value={session.id} code />
             <Metadata label="Created" value={new Date(session.created_at).toLocaleString()} />

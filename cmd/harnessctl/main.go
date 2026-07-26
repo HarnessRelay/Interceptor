@@ -14,11 +14,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/harnessrelay/interceptor/internal/shims"
 )
 
 const version = "dev"
@@ -30,12 +34,13 @@ type client struct {
 }
 
 type sessionDTO struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	CWD     string   `json:"cwd"`
-	Status  string   `json:"status"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Command  string   `json:"command"`
+	Args     []string `json:"args"`
+	CWD      string   `json:"cwd"`
+	Status   string   `json:"status"`
+	ExitCode *int     `json:"exit_code"`
 }
 
 type snapshotResponse struct {
@@ -55,6 +60,14 @@ type eventEnvelope struct {
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		var exitErr processExitError
+		if errors.As(err, &exitErr) {
+			code := exitErr.code
+			if code < 0 {
+				code = 1
+			}
+			os.Exit(code)
+		}
 		fmt.Fprintf(os.Stderr, "harnessctl: %v\n", err)
 		os.Exit(1)
 	}
@@ -73,6 +86,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return c.status(stdout)
 	case "sessions", "list":
 		return c.sessions(stdout)
+	case "shims":
+		return runShims(args[1:], stdout, stderr)
+	case "shim":
+		return c.runShim(args[1:], stdout, stderr)
 	case "run":
 		return c.runSession(args[1:], stdout)
 	case "interrupt":
@@ -105,14 +122,16 @@ Usage:
   harnessctl version
   harnessctl status
   harnessctl sessions
-  harnessctl run [--name NAME] [--cwd DIR] <command> [args...]
+  harnessctl run [--name NAME] [--cwd DIR] [--backend pty|direct] -- <command> [args...]
   harnessctl interrupt <session-id>
   harnessctl terminate <session-id>
   harnessctl attach <session-id>       detach with Ctrl-]
+  harnessctl shims <install|uninstall|uninstall-all|list|status|doctor|reshim|path>
 
 Environment:
   HARNESSRELAY_ADDR   default http://127.0.0.1:8765
   HARNESSRELAY_TOKEN  required for authenticated API calls
+  HARNESSRELAY_BYPASS set to 1 to execute a shim's real binary directly
 `)
 }
 
@@ -121,17 +140,37 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 	if err := c.request(http.MethodGet, "/api/v1/sessions/"+id+"/snapshot", nil, &snapshot); err != nil {
 		return err
 	}
-	for _, chunk := range snapshot.Chunks {
-		if chunk.Encoding != "base64" {
-			continue
+	initialBytes, err := decodedSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if _, err := stdout.Write(initialBytes); err != nil {
+		return err
+	}
+	var current struct {
+		Session sessionDTO `json:"session"`
+	}
+	if err := c.request(http.MethodGet, "/api/v1/sessions/"+id, nil, &current); err != nil {
+		return err
+	}
+	if current.Session.Status == "exited" || current.Session.Status == "failed" || current.Session.Status == "terminated" {
+		var finalSnapshot snapshotResponse
+		if err := c.request(http.MethodGet, "/api/v1/sessions/"+id+"/snapshot", nil, &finalSnapshot); err != nil {
+			return err
 		}
-		data, err := base64.StdEncoding.DecodeString(chunk.Bytes)
+		finalBytes, err := decodedSnapshot(finalSnapshot)
 		if err != nil {
 			return err
 		}
-		if _, err := stdout.Write(data); err != nil {
-			return err
+		if bytes.HasPrefix(finalBytes, initialBytes) {
+			if _, err := stdout.Write(finalBytes[len(initialBytes):]); err != nil {
+				return err
+			}
 		}
+		if current.Session.ExitCode != nil && *current.Session.ExitCode != 0 {
+			return processExitError{code: *current.Session.ExitCode}
+		}
+		return nil
 	}
 	if err := c.resizeFromTerminal(id, stdout); err != nil {
 		// Non-TTY output is fine; attach can still stream bytes.
@@ -151,25 +190,48 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 	}
 	defer ws.Close()
 
-	errCh := make(chan error, 2)
-	done := make(chan struct{})
+	outputErrCh := make(chan error, 1)
+	inputErrCh := make(chan error, 1)
 	go func() {
-		defer close(done)
-		errCh <- c.streamWebSocketOutput(ws, id, stdout)
+		outputErrCh <- c.streamWebSocketOutput(ws, id, stdout)
 	}()
 	go func() {
-		errCh <- c.streamAttachInput(stdin, id)
+		inputErrCh <- c.streamAttachInput(stdin, id)
 	}()
 
-	select {
-	case err := <-errCh:
-		if errors.Is(err, errDetach) || errors.Is(err, io.EOF) {
-			return nil
+	for {
+		select {
+		case err := <-outputErrCh:
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		case err := <-inputErrCh:
+			if errors.Is(err, errDetach) {
+				return nil
+			}
+			if errors.Is(err, io.EOF) {
+				inputErrCh = nil
+				continue
+			}
+			return err
 		}
-		return err
-	case <-done:
-		return nil
 	}
+}
+
+func decodedSnapshot(snapshot snapshotResponse) ([]byte, error) {
+	var out []byte
+	for _, chunk := range snapshot.Chunks {
+		if chunk.Encoding != "base64" {
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(chunk.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, data...)
+	}
+	return out, nil
 }
 
 func (c client) forwardResizeSignals(id string, stdout io.Writer) func() {
@@ -236,7 +298,22 @@ func (c client) streamWebSocketOutput(conn net.Conn, id string, stdout io.Writer
 		if err := json.Unmarshal(payload, &event); err != nil {
 			continue
 		}
-		if event.SessionID != id || event.Type != "terminal.output" {
+		if event.SessionID != id {
+			continue
+		}
+		if event.Type == "session.exited" {
+			var data struct {
+				ExitCode int `json:"exit_code"`
+			}
+			if err := json.Unmarshal(event.Data, &data); err != nil {
+				return err
+			}
+			if data.ExitCode == 0 {
+				return nil
+			}
+			return processExitError{code: data.ExitCode}
+		}
+		if event.Type != "terminal.output" {
 			continue
 		}
 		var data struct {
@@ -372,6 +449,14 @@ func websocketKey() (string, error) {
 
 var errDetach = errors.New("detach requested")
 
+type processExitError struct {
+	code int
+}
+
+func (e processExitError) Error() string {
+	return fmt.Sprintf("managed command exited with status %d", e.code)
+}
+
 func (c client) resizeFromTerminal(id string, stdout io.Writer) error {
 	file, ok := stdout.(*os.File)
 	if !ok {
@@ -474,6 +559,7 @@ func (c client) sessions(stdout io.Writer) error {
 
 func (c client) runSession(args []string, stdout io.Writer) error {
 	var name, cwd string
+	backend := shims.BackendPTY
 	for len(args) > 0 {
 		switch args[0] {
 		case "--name":
@@ -488,6 +574,19 @@ func (c client) runSession(args []string, stdout io.Writer) error {
 			}
 			cwd = args[1]
 			args = args[2:]
+		case "--backend":
+			if len(args) < 2 {
+				return errors.New("--backend requires a value")
+			}
+			var err error
+			backend, err = shims.ParseBackend(args[1])
+			if err != nil {
+				return err
+			}
+			args = args[2:]
+		case "--":
+			args = args[1:]
+			goto parsed
 		default:
 			goto parsed
 		}
@@ -496,12 +595,28 @@ parsed:
 	if len(args) == 0 {
 		return errors.New("run requires a command")
 	}
+	if backend == shims.BackendDirect {
+		path, err := exec.LookPath(args[0])
+		if err != nil {
+			return err
+		}
+		return execDirect(path, args[1:])
+	}
+	if backend == shims.BackendTMUX {
+		return errors.New("tmux relay backend is deferred; use --backend pty or --backend direct")
+	}
+	rows, cols := 24, 80
+	if file, ok := stdout.(*os.File); ok {
+		if size, err := getWinsize(file); err == nil {
+			rows, cols = int(size.Rows), int(size.Cols)
+		}
+	}
 	body := map[string]any{
 		"name":     name,
 		"command":  args[0],
 		"args":     args[1:],
 		"cwd":      cwd,
-		"terminal": map[string]any{"rows": 24, "cols": 80},
+		"terminal": map[string]any{"rows": rows, "cols": cols},
 	}
 	var resp struct {
 		Session sessionDTO `json:"session"`
@@ -510,7 +625,429 @@ parsed:
 		return err
 	}
 	fmt.Fprintf(stdout, "%s\t%s\t%s\n", resp.Session.ID, resp.Session.Status, resp.Session.Command)
+	if file, ok := stdout.(*os.File); ok {
+		if _, err := getWinsize(file); err == nil {
+			return c.attach(resp.Session.ID, os.Stdin, stdout)
+		}
+	}
 	return nil
+}
+
+func runShims(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printShimsUsage(stdout)
+		return nil
+	}
+	configPath, err := shims.DefaultConfigPath()
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "path":
+		if len(args) != 1 {
+			return errors.New("shims path accepts no arguments")
+		}
+		cfg, err := shims.Load(configPath)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, cfg.ShimDir)
+		return nil
+	case "list":
+		if len(args) != 1 {
+			return errors.New("shims list accepts no arguments")
+		}
+		cfg, err := shims.Load(configPath)
+		if err != nil {
+			return err
+		}
+		seen := make(map[string]struct{})
+		for _, target := range shims.KnownTargets() {
+			state := "available"
+			if _, ok := cfg.Entries[target.Name]; ok {
+				state = "installed"
+			}
+			fmt.Fprintf(stdout, "%s\t%s\t%s\n", target.Name, state, target.Description)
+			seen[target.Name] = struct{}{}
+		}
+		for _, name := range shims.SortedEntryNames(cfg) {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			fmt.Fprintf(stdout, "%s\tinstalled\tuser-configured shim target\n", name)
+		}
+		return nil
+	case "install":
+		return installShims(configPath, args[1:], stdout, stderr)
+	case "uninstall":
+		if len(args) < 2 {
+			return errors.New("shims uninstall requires at least one shim name")
+		}
+		if err := shims.Uninstall(configPath, args[1:]); err != nil {
+			return err
+		}
+		for _, name := range args[1:] {
+			fmt.Fprintf(stdout, "uninstalled %s\n", name)
+		}
+		return nil
+	case "uninstall-all":
+		if len(args) != 1 {
+			return errors.New("shims uninstall-all accepts no arguments")
+		}
+		if err := shims.UninstallAll(configPath); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "uninstalled all HarnessRelay-owned shims")
+		return nil
+	case "reshim":
+		if len(args) != 1 {
+			return errors.New("shims reshim accepts no arguments")
+		}
+		harnessctl, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		if err := shims.Reshim(configPath, harnessctl); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "regenerated HarnessRelay shims from config")
+		return nil
+	case "status":
+		return printShimsStatus(configPath, stdout)
+	case "doctor":
+		return doctorShims(configPath, stdout)
+	default:
+		printShimsUsage(stderr)
+		return fmt.Errorf("unknown shims command: %s", args[0])
+	}
+}
+
+func printShimsUsage(w io.Writer) {
+	fmt.Fprint(w, `Manage user-local HarnessRelay command shims.
+
+Usage:
+  harnessctl shims install [--all-known] [--backend pty|tmux|direct] [--real-binary PATH] [--force] <name>...
+  harnessctl shims uninstall <name>...
+  harnessctl shims uninstall-all
+  harnessctl shims list
+  harnessctl shims status
+  harnessctl shims doctor
+  harnessctl shims reshim
+  harnessctl shims path
+`)
+}
+
+func installShims(configPath string, args []string, stdout, stderr io.Writer) error {
+	cfg, err := shims.Load(configPath)
+	if err != nil {
+		return err
+	}
+	backend := cfg.DefaultBackend
+	var realBinary string
+	var force, allKnown bool
+	var names []string
+	for len(args) > 0 {
+		switch args[0] {
+		case "--backend":
+			if len(args) < 2 {
+				return errors.New("--backend requires a value")
+			}
+			var err error
+			backend, err = shims.ParseBackend(args[1])
+			if err != nil {
+				return err
+			}
+			args = args[2:]
+		case "--real-binary":
+			if len(args) < 2 {
+				return errors.New("--real-binary requires a value")
+			}
+			realBinary = args[1]
+			args = args[2:]
+		case "--force":
+			force = true
+			args = args[1:]
+		case "--all-known":
+			allKnown = true
+			args = args[1:]
+		case "--":
+			names = append(names, args[1:]...)
+			args = nil
+		default:
+			if strings.HasPrefix(args[0], "-") {
+				return fmt.Errorf("unknown shims install option: %s", args[0])
+			}
+			names = append(names, args[0])
+			args = args[1:]
+		}
+	}
+	if allKnown {
+		for _, target := range shims.KnownTargets() {
+			names = append(names, target.Name)
+		}
+	}
+	names = uniqueStrings(names)
+	if len(names) == 0 {
+		return errors.New("shims install requires a shim name or --all-known")
+	}
+	if realBinary != "" && len(names) != 1 {
+		return errors.New("--real-binary requires exactly one shim name")
+	}
+	harnessctl, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	var installed []shims.Entry
+	for _, name := range names {
+		selectedRealBinary := realBinary
+		if selectedRealBinary == "" {
+			candidates, resolveErr := shims.ResolveRealBinaryCandidates(name, os.Getenv("PATH"), cfg.ShimDir)
+			if resolveErr != nil {
+				if allKnown {
+					fmt.Fprintf(stderr, "skipped %s: real binary is not installed\n", name)
+					continue
+				}
+				return resolveErr
+			}
+			selectedRealBinary = candidates[0]
+			if len(candidates) > 1 {
+				fmt.Fprintf(stderr, "multiple real binaries found for %s; using %s\n", name, candidates[0])
+				for _, candidate := range candidates[1:] {
+					fmt.Fprintf(stderr, "  also found: %s\n", candidate)
+				}
+			}
+		}
+		entry, err := shims.Install(shims.InstallOptions{
+			Name: name, RealBinary: selectedRealBinary, Backend: backend,
+			Harnessctl: harnessctl, Force: force, ConfigPath: configPath,
+		})
+		if err != nil {
+			return err
+		}
+		installed = append(installed, entry)
+		fmt.Fprintf(stdout, "installed %s -> %s (%s)\n", name, entry.RealBinary, entry.Backend)
+	}
+	if len(installed) == 0 {
+		return errors.New("no requested shim targets have an installed real binary")
+	}
+	pathOK := true
+	for _, entry := range installed {
+		if !shims.AnalyzePath(cfg.ShimDir, entry.RealBinary, os.Getenv("PATH")).Active {
+			pathOK = false
+		}
+	}
+	if !pathOK {
+		fmt.Fprintf(stderr, "HarnessRelay shims are installed, but %s is not active before the real binaries in PATH.\n", cfg.ShimDir)
+		fmt.Fprintf(stderr, "Add this to your shell profile:\n\n  export PATH=%q:$PATH\n\nThen restart your shell.\n", cfg.ShimDir)
+	}
+	return nil
+}
+
+func printShimsStatus(configPath string, stdout io.Writer) error {
+	cfg, err := shims.Load(configPath)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Entries) == 0 {
+		fmt.Fprintln(stdout, "no HarnessRelay shims installed")
+		return nil
+	}
+	for _, name := range shims.SortedEntryNames(cfg) {
+		entry := cfg.Entries[name]
+		state := shims.AnalyzePath(cfg.ShimDir, entry.RealBinary, os.Getenv("PATH"))
+		active := "inactive"
+		if state.Active {
+			active = "active"
+		}
+		fmt.Fprintf(stdout, "%s\t%s\t%s\treal=%s\tshim=%s\n", name, active, entry.Backend, entry.RealBinary, entry.ShimPath)
+	}
+	return nil
+}
+
+func doctorShims(configPath string, stdout io.Writer) error {
+	cfg, err := shims.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(stdout, "[fail] config: %v\n", err)
+		return nil
+	}
+	fmt.Fprintf(stdout, "[ok] config: %s\n", configPath)
+	if len(cfg.Entries) == 0 {
+		fmt.Fprintln(stdout, "[warn] no shims are installed")
+	}
+	for _, name := range shims.SortedEntryNames(cfg) {
+		entry := cfg.Entries[name]
+		if err := shims.ValidateRuntimeEntry(name, entry); err != nil {
+			fmt.Fprintf(stdout, "[fail] %s: %v\n", name, err)
+			continue
+		}
+		owned, err := shims.IsManagedShim(entry.ShimPath)
+		if err != nil {
+			fmt.Fprintf(stdout, "[fail] %s shim: %v\n", name, err)
+		} else if !owned {
+			fmt.Fprintf(stdout, "[fail] %s shim is not owned by HarnessRelay\n", name)
+		} else if info, err := os.Stat(entry.ShimPath); err != nil || info.Mode()&0o111 == 0 {
+			fmt.Fprintf(stdout, "[fail] %s shim is not executable\n", name)
+		} else {
+			fmt.Fprintf(stdout, "[ok] %s shim file\n", name)
+		}
+		state := shims.AnalyzePath(cfg.ShimDir, entry.RealBinary, os.Getenv("PATH"))
+		if !state.Present {
+			fmt.Fprintf(stdout, "[fail] %s: shim directory is missing from PATH\n", name)
+		} else if !state.Active {
+			fmt.Fprintf(stdout, "[fail] %s: shim directory appears after the real binary directory in PATH\n", name)
+		} else {
+			fmt.Fprintf(stdout, "[ok] %s PATH order\n", name)
+		}
+		if entry.Backend == shims.BackendTMUX {
+			if _, err := exec.LookPath("tmux"); err != nil {
+				fmt.Fprintln(stdout, "[fail] tmux backend requested but tmux is unavailable")
+			} else {
+				fmt.Fprintln(stdout, "[warn] tmux is installed, but HarnessRelay tmux registration is deferred; runtime falls back to PTY")
+			}
+		}
+	}
+	if entries, err := os.ReadDir(cfg.ShimDir); err == nil {
+		for _, item := range entries {
+			if item.IsDir() {
+				continue
+			}
+			if _, configured := cfg.Entries[item.Name()]; !configured {
+				fmt.Fprintf(stdout, "[warn] unmanaged file in shim directory may shadow %s: %s\n", item.Name(), filepath.Join(cfg.ShimDir, item.Name()))
+			}
+		}
+	}
+	c := newClient()
+	if err := c.health(); err != nil {
+		fmt.Fprintf(stdout, "[warn] daemon unavailable: %v; configured fallback is %s\n", err, cfg.DaemonUnavailableFallback)
+	} else {
+		fmt.Fprintln(stdout, "[ok] daemon reachable")
+	}
+	fmt.Fprintln(stdout, "[info] bypass any shim with HARNESSRELAY_BYPASS=1")
+	return nil
+}
+
+func (c client) runShim(args []string, stdout, stderr io.Writer) error {
+	if len(args) < 2 || args[0] != "exec" {
+		return errors.New("usage: harnessctl shim exec <shim-name> -- <args...>")
+	}
+	name := args[1]
+	childArgs := args[2:]
+	if len(childArgs) > 0 && childArgs[0] == "--" {
+		childArgs = childArgs[1:]
+	}
+	configPath, err := shims.DefaultConfigPath()
+	if err != nil {
+		return err
+	}
+	cfg, err := shims.Load(configPath)
+	if err != nil {
+		return err
+	}
+	entry, ok := cfg.Entries[name]
+	if !ok || !entry.Enabled {
+		return fmt.Errorf("shim %q is not installed or enabled", name)
+	}
+	if err := shims.ValidateRuntimeEntry(name, entry); err != nil {
+		return err
+	}
+	if os.Getenv("HARNESSRELAY_BYPASS") == "1" {
+		return execDirect(entry.RealBinary, childArgs)
+	}
+	backend := entry.Backend
+	if backend == shims.BackendDirect {
+		return execDirect(entry.RealBinary, childArgs)
+	}
+	if err := c.health(); err != nil {
+		if cfg.DaemonUnavailableFallback == shims.BackendDirect {
+			fmt.Fprintf(stderr, "HarnessRelay daemon unavailable (%v); running %s directly. No relay session will be created.\n", err, name)
+			return execDirect(entry.RealBinary, childArgs)
+		}
+		return fmt.Errorf("daemon unavailable: %w", err)
+	}
+	if backend == shims.BackendTMUX {
+		fmt.Fprintln(stderr, "HarnessRelay tmux registration is deferred; using the daemon-owned PTY backend.")
+		backend = shims.BackendPTY
+	}
+	if backend != shims.BackendPTY {
+		return fmt.Errorf("unsupported shim backend %q", backend)
+	}
+	rows, cols := 24, 80
+	if file, ok := stdout.(*os.File); ok {
+		if size, err := getWinsize(file); err == nil {
+			rows, cols = int(size.Rows), int(size.Cols)
+		}
+	}
+	session, err := c.createShimSession(name, entry, childArgs, rows, cols)
+	if err != nil {
+		return err
+	}
+	return c.attach(session.ID, os.Stdin, stdout)
+}
+
+func (c client) health() error {
+	var health struct {
+		Status string `json:"status"`
+	}
+	if err := c.request(http.MethodGet, "/api/v1/health", nil, &health); err != nil {
+		return err
+	}
+	if health.Status != "ok" {
+		return fmt.Errorf("daemon health is %q", health.Status)
+	}
+	return nil
+}
+
+func (c client) createShimSession(name string, entry shims.Entry, args []string, rows, cols int) (sessionDTO, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return sessionDTO{}, err
+	}
+	body := map[string]any{
+		"name": name, "harness_type": entry.Harness, "command": entry.RealBinary,
+		"args": args, "cwd": cwd, "env": currentEnvironment(),
+		"terminal": map[string]any{"rows": rows, "cols": cols},
+		"origin":   "shim", "origin_backend": string(shims.BackendPTY),
+		"shim_name": name, "real_binary": entry.RealBinary, "attachable": true,
+	}
+	var resp struct {
+		Session sessionDTO `json:"session"`
+	}
+	if err := c.request(http.MethodPost, "/api/v1/sessions", body, &resp); err != nil {
+		return sessionDTO{}, err
+	}
+	return resp.Session, nil
+}
+
+func execDirect(path string, args []string) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(absolute, append([]string{absolute}, args...), os.Environ())
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func currentEnvironment() map[string]string {
+	env := make(map[string]string)
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	return env
 }
 
 func (c client) control(id, action string, body map[string]any, stdout io.Writer) error {

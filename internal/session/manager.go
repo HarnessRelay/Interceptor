@@ -47,14 +47,19 @@ const (
 
 // CreateOptions describes how to create a new session.
 type CreateOptions struct {
-	Name        string
-	HarnessType string
-	Command     string
-	Args        []string
-	WorkDir     string
-	Env         []string
-	Rows        uint16
-	Cols        uint16
+	Name          string
+	HarnessType   string
+	Command       string
+	Args          []string
+	WorkDir       string
+	Env           []string
+	Rows          uint16
+	Cols          uint16
+	Origin        string
+	OriginBackend string
+	ShimName      string
+	RealBinary    string
+	Attachable    bool
 }
 
 // TerminalSize describes a session terminal's character dimensions.
@@ -65,43 +70,53 @@ type TerminalSize struct {
 
 // Info is a point-in-time, race-safe session metadata snapshot.
 type Info struct {
-	ID           string
-	Name         string
-	HarnessType  string
-	AdapterID    string
-	AdapterName  string
-	Capabilities []harness.Capability
-	Command      string
-	Args         []string
-	WorkDir      string
-	Status       Status
-	PID          int
-	PGID         int
-	Terminal     TerminalSize
-	StartedAt    time.Time
-	ExitedAt     *time.Time
-	ExitCode     *int
+	ID            string
+	Name          string
+	HarnessType   string
+	AdapterID     string
+	AdapterName   string
+	Capabilities  []harness.Capability
+	Command       string
+	Args          []string
+	WorkDir       string
+	Status        Status
+	PID           int
+	PGID          int
+	Terminal      TerminalSize
+	StartedAt     time.Time
+	ExitedAt      *time.Time
+	ExitCode      *int
+	Origin        string
+	OriginBackend string
+	ShimName      string
+	RealBinary    string
+	Attachable    bool
 }
 
 // Session holds metadata and runtime state for one session.
 type Session struct {
-	ID           string
-	Name         string
-	HarnessType  string
-	AdapterID    string
-	AdapterName  string
-	Capabilities []harness.Capability
-	Command      string
-	Args         []string
-	WorkDir      string
-	Status       Status
-	PID          int
-	PGID         int
-	Rows         uint16
-	Cols         uint16
-	StartedAt    time.Time
-	ExitedAt     *time.Time
-	ExitCode     *int
+	ID            string
+	Name          string
+	HarnessType   string
+	AdapterID     string
+	AdapterName   string
+	Capabilities  []harness.Capability
+	Command       string
+	Args          []string
+	WorkDir       string
+	Status        Status
+	PID           int
+	PGID          int
+	Rows          uint16
+	Cols          uint16
+	StartedAt     time.Time
+	ExitedAt      *time.Time
+	ExitCode      *int
+	Origin        string
+	OriginBackend string
+	ShimName      string
+	RealBinary    string
+	Attachable    bool
 
 	runtime           *pty.Runtime
 	adapter           harness.Adapter
@@ -161,22 +176,27 @@ func (s *Session) Info() Info {
 		exitCode = &code
 	}
 	return Info{
-		ID:           s.ID,
-		Name:         s.Name,
-		HarnessType:  s.HarnessType,
-		AdapterID:    s.AdapterID,
-		AdapterName:  s.AdapterName,
-		Capabilities: append([]harness.Capability(nil), s.Capabilities...),
-		Command:      s.Command,
-		Args:         args,
-		WorkDir:      s.WorkDir,
-		Status:       s.Status,
-		PID:          s.PID,
-		PGID:         s.PGID,
-		Terminal:     TerminalSize{Rows: s.Rows, Cols: s.Cols},
-		StartedAt:    s.StartedAt,
-		ExitedAt:     exitedAt,
-		ExitCode:     exitCode,
+		ID:            s.ID,
+		Name:          s.Name,
+		HarnessType:   s.HarnessType,
+		AdapterID:     s.AdapterID,
+		AdapterName:   s.AdapterName,
+		Capabilities:  append([]harness.Capability(nil), s.Capabilities...),
+		Command:       s.Command,
+		Args:          args,
+		WorkDir:       s.WorkDir,
+		Status:        s.Status,
+		PID:           s.PID,
+		PGID:          s.PGID,
+		Terminal:      TerminalSize{Rows: s.Rows, Cols: s.Cols},
+		StartedAt:     s.StartedAt,
+		ExitedAt:      exitedAt,
+		ExitCode:      exitCode,
+		Origin:        s.Origin,
+		OriginBackend: s.OriginBackend,
+		ShimName:      s.ShimName,
+		RealBinary:    s.RealBinary,
+		Attachable:    s.Attachable,
 	}
 }
 
@@ -277,26 +297,31 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 	}
 
 	sess := &Session{
-		ID:           id,
-		Name:         opts.Name,
-		HarnessType:  harnessType,
-		AdapterID:    adapter.ID(),
-		AdapterName:  adapter.Name(),
-		Capabilities: append([]harness.Capability(nil), adapter.Capabilities()...),
-		Command:      opts.Command,
-		Args:         opts.Args,
-		WorkDir:      opts.WorkDir,
-		Status:       StatusStarting,
-		PID:          r.PID(),
-		PGID:         r.PGID(),
-		Rows:         rows,
-		Cols:         cols,
-		StartedAt:    time.Now(),
-		runtime:      r,
-		adapter:      adapter,
-		parser:       parser,
-		buf:          newOutputBuffer(defaultOutputBufferSize),
-		done:         make(chan struct{}),
+		ID:            id,
+		Name:          opts.Name,
+		HarnessType:   harnessType,
+		AdapterID:     adapter.ID(),
+		AdapterName:   adapter.Name(),
+		Capabilities:  append([]harness.Capability(nil), adapter.Capabilities()...),
+		Command:       opts.Command,
+		Args:          opts.Args,
+		WorkDir:       opts.WorkDir,
+		Status:        StatusStarting,
+		PID:           r.PID(),
+		PGID:          r.PGID(),
+		Rows:          rows,
+		Cols:          cols,
+		StartedAt:     time.Now(),
+		Origin:        opts.Origin,
+		OriginBackend: opts.OriginBackend,
+		ShimName:      opts.ShimName,
+		RealBinary:    opts.RealBinary,
+		Attachable:    true,
+		runtime:       r,
+		adapter:       adapter,
+		parser:        parser,
+		buf:           newOutputBuffer(defaultOutputBufferSize),
+		done:          make(chan struct{}),
 	}
 
 	if m.bus != nil {
@@ -323,6 +348,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 			WorkDir:             sess.WorkDir,
 			Status:              string(sess.Status),
 			StartedAt:           sess.StartedAt,
+			Origin:              sess.Origin,
+			OriginBackend:       sess.OriginBackend,
+			ShimName:            sess.ShimName,
+			RealBinary:          sess.RealBinary,
+			Attachable:          sess.Attachable,
 		})
 		sess.publish(events.TypeHarnessDetected, events.HarnessDetected{
 			AdapterID:   adapter.ID(),

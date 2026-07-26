@@ -14,6 +14,8 @@
 - `internal/harness/fakesemantic`: explicitly enabled QA-only third adapter
 - `internal/pty`: PTY process runtime
 - `internal/security`: local token auth, CSRF, and origin helpers
+- `internal/shims`: user-local shim config, safe generated files, PATH
+  diagnostics, real-binary resolution, and backend policy
 - `internal/session`: session manager and bounded terminal output buffer
 - `internal/storage`: bounded in-memory audit metadata
 - `web`: Vite/React/xterm.js dashboard
@@ -103,6 +105,41 @@ Attach to a running session:
 ```
 
 Attach mode puts the local terminal in raw mode, forwards input through the daemon input API, streams output through the WebSocket event stream, sends resize updates on `SIGWINCH`, and restores local terminal state on exit. Detach with `Ctrl-]`.
+
+## Adding and Maintaining Harness Shims
+
+Command names are architecture. Read
+`Docs/Architecture/Command-Nomenclature.md` before adding a CLI command, group,
+or verb. New shim lifecycle behavior belongs under `harnessctl shims`; the
+generated runtime remains `harnessctl shim exec`.
+
+Known shim targets are a generic catalog in `internal/shims.KnownTargets`.
+Adding one requires:
+
+1. a stable command name and harness-neutral description
+2. no adapter requirement (unknown tools still use Generic)
+3. install/real-binary resolution tests using temporary directories
+4. fake runtime coverage for args, cwd, environment, bypass, and fallback
+5. user documentation and QA matrix updates
+
+Do not use `exec.LookPath` during shim runtime. Installation resolves and stores
+the absolute real binary while excluding the shim directory; runtime validates
+that path again. Do not remove/replace files without the HarnessRelay ownership
+marker unless the user explicitly passes install `--force`.
+
+The initial relay backend is `pty`. tmux is a recognized/deferred backend until
+the daemon can register and control tmux panes as first-class sessions. Do not
+add a standalone `tmux` launch that claims web visibility.
+
+Focused checks:
+
+```bash
+go test ./internal/shims ./cmd/harnessctl ./internal/session ./internal/api
+npm --prefix web run qa -- --grep "Shim session origin"
+```
+
+Full user behavior is documented in `Docs/Shims.md`; the design research is
+`Docs/Spec/Research/13-CLI-Shim-Proxy-Mode.md`.
 
 ## Adapter Notes
 

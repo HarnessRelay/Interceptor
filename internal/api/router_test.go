@@ -174,6 +174,28 @@ func TestSessionRESTCreateListGetSnapshotAndEvents(t *testing.T) {
 	}
 }
 
+func TestShimSessionOriginMetadata(t *testing.T) {
+	router, _, _ := newTestRouter()
+	createBody := map[string]any{
+		"name": "fakeharness", "harness_type": "fakeharness",
+		"command": "/bin/sh", "args": []string{fixturePath(t, "plain-output.sh")},
+		"origin": "shim", "origin_backend": "pty", "shim_name": "fakeharness",
+		"real_binary": "/bin/sh", "attachable": true,
+		"terminal": map[string]any{"rows": 24, "cols": 80},
+	}
+	rec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions", createBody)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var created sessionResponse
+	decodeBody(t, rec, &created)
+	got := created.Session
+	if got.Origin != "shim" || got.OriginBackend != "pty" || got.ShimName != "fakeharness" ||
+		got.RealBinary != "/bin/sh" || !got.Attachable {
+		t.Fatalf("origin metadata = %+v", got)
+	}
+}
+
 func TestCodexSessionPromptAndApprovalActionAPI(t *testing.T) {
 	router, mgr, bus := newTestRouter()
 	created := createSession(t, router, map[string]any{

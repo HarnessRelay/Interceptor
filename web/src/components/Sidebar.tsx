@@ -348,8 +348,16 @@ function SessionCard({ session, selected, mode, onSelect }: { session: Session; 
       <span className="session-card-command" title={commandLine(session.command, session.args)}>
         {commandLine(session.command, session.args)}
       </span>
+      <span className="session-card-path" title={session.cwd || "Daemon working directory"}>
+        {session.cwd || "Daemon working directory"}
+      </span>
       <span className="session-card-meta">
         <AdapterBadge id={session.adapter_id} name={session.adapter_name} semantic={semantic} />
+        {session.origin === "shim" && (
+          <span className="mode-badge">
+            Shim · {(session.origin_backend || "pty").toUpperCase()} · {session.attachable ? "Attachable" : "Detached"}
+          </span>
+        )}
         <span className="mode-badge">{mode === "chat" ? "Chat" : "Terminal"}</span>
         <time dateTime={session.updated_at}>{relativeTime(session.updated_at || session.created_at)}</time>
       </span>

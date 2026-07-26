@@ -64,14 +64,19 @@ type harnessesResponse struct {
 }
 
 type createSessionRequest struct {
-	Name        string            `json:"name"`
-	HarnessType string            `json:"harness_type"`
-	Command     string            `json:"command"`
-	Args        []string          `json:"args"`
-	CWD         string            `json:"cwd"`
-	WorkDir     string            `json:"work_dir"`
-	Env         map[string]string `json:"env"`
-	Terminal    terminalDTO       `json:"terminal"`
+	Name          string            `json:"name"`
+	HarnessType   string            `json:"harness_type"`
+	Command       string            `json:"command"`
+	Args          []string          `json:"args"`
+	CWD           string            `json:"cwd"`
+	WorkDir       string            `json:"work_dir"`
+	Env           map[string]string `json:"env"`
+	Terminal      terminalDTO       `json:"terminal"`
+	Origin        string            `json:"origin"`
+	OriginBackend string            `json:"origin_backend"`
+	ShimName      string            `json:"shim_name"`
+	RealBinary    string            `json:"real_binary"`
+	Attachable    bool              `json:"attachable"`
 }
 
 type inputRequest struct {
@@ -152,6 +157,11 @@ type sessionDTO struct {
 	UpdatedAt           time.Time   `json:"updated_at"`
 	ExitedAt            *time.Time  `json:"exited_at,omitempty"`
 	ExitCode            *int        `json:"exit_code,omitempty"`
+	Origin              string      `json:"origin,omitempty"`
+	OriginBackend       string      `json:"origin_backend,omitempty"`
+	ShimName            string      `json:"shim_name,omitempty"`
+	RealBinary          string      `json:"real_binary,omitempty"`
+	Attachable          bool        `json:"attachable"`
 }
 
 type harnessDTO struct {
@@ -336,6 +346,24 @@ func (opts Options) handleCreateSession(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "command is required")
 		return
 	}
+	if req.Origin != "" && req.Origin != "shim" {
+		writeError(w, http.StatusBadRequest, "origin must be shim when provided")
+		return
+	}
+	if req.Origin == "shim" {
+		if req.OriginBackend != "pty" && req.OriginBackend != "tmux" {
+			writeError(w, http.StatusBadRequest, "shim origin_backend must be pty or tmux")
+			return
+		}
+		if req.ShimName == "" || req.RealBinary == "" {
+			writeError(w, http.StatusBadRequest, "shim_name and real_binary are required for shim origin")
+			return
+		}
+		if req.RealBinary != req.Command {
+			writeError(w, http.StatusBadRequest, "real_binary must match command for shim origin")
+			return
+		}
+	}
 	if err := validateTerminalSize(req.Terminal.Rows, req.Terminal.Cols, true); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -345,14 +373,19 @@ func (opts Options) handleCreateSession(w http.ResponseWriter, r *http.Request) 
 		workDir = req.WorkDir
 	}
 	sess, err := opts.Sessions.Create(r.Context(), session.CreateOptions{
-		Name:        req.Name,
-		HarnessType: req.HarnessType,
-		Command:     req.Command,
-		Args:        req.Args,
-		WorkDir:     workDir,
-		Env:         envMapToList(req.Env),
-		Rows:        req.Terminal.Rows,
-		Cols:        req.Terminal.Cols,
+		Name:          req.Name,
+		HarnessType:   req.HarnessType,
+		Command:       req.Command,
+		Args:          req.Args,
+		WorkDir:       workDir,
+		Env:           envMapToList(req.Env),
+		Rows:          req.Terminal.Rows,
+		Cols:          req.Terminal.Cols,
+		Origin:        req.Origin,
+		OriginBackend: req.OriginBackend,
+		ShimName:      req.ShimName,
+		RealBinary:    req.RealBinary,
+		Attachable:    req.Attachable,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -817,10 +850,15 @@ func sessionToDTO(info session.Info) sessionDTO {
 			Rows: info.Terminal.Rows,
 			Cols: info.Terminal.Cols,
 		},
-		CreatedAt: info.StartedAt,
-		UpdatedAt: updatedAt,
-		ExitedAt:  info.ExitedAt,
-		ExitCode:  info.ExitCode,
+		CreatedAt:     info.StartedAt,
+		UpdatedAt:     updatedAt,
+		ExitedAt:      info.ExitedAt,
+		ExitCode:      info.ExitCode,
+		Origin:        info.Origin,
+		OriginBackend: info.OriginBackend,
+		ShimName:      info.ShimName,
+		RealBinary:    info.RealBinary,
+		Attachable:    info.Attachable,
 	}
 }
 
