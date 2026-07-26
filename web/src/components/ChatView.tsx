@@ -372,6 +372,11 @@ export function ChatView({
             {metadata.working_directory && <span title={metadata.working_directory}>{metadata.working_directory}</span>}
           </div>
         )}
+        {session.origin === "shim" && (
+          <aside className="terminal-control-notice" role="note">
+            This session was controlled from a terminal. Some terminal-entered prompts may only be visible in Terminal Mode.
+          </aside>
+        )}
         {approvals.map((event) => {
           const data = event.data as SemanticEventData;
           return (

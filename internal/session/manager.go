@@ -125,9 +125,11 @@ type Session struct {
 	done              chan struct{}
 	mu                sync.RWMutex
 	inputMu           sync.Mutex
+	parserMu          sync.Mutex
 	semanticStatus    string
 	semanticIdleTimer *time.Timer
 	pendingAction     *pendingSemanticAction
+	outputDone        chan struct{}
 
 	publish func(typ events.Type, data any) events.Event
 }
@@ -322,6 +324,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		parser:        parser,
 		buf:           newOutputBuffer(defaultOutputBufferSize),
 		done:          make(chan struct{}),
+		outputDone:    make(chan struct{}),
 	}
 
 	if m.bus != nil {
@@ -619,7 +622,9 @@ func (m *Manager) ExecuteAction(id, eventID, actionID string) error {
 		}
 	}
 	if observer, ok := s.parser.(harness.ActionObserver); ok {
+		s.parserMu.Lock()
 		observer.ActionResolved(actionID)
+		s.parserMu.Unlock()
 	}
 	resolution := result.Resolution
 	if resolution == "" {
@@ -761,6 +766,7 @@ func (s *Session) setStatus(st Status) {
 }
 
 func (s *Session) readOutput() {
+	defer close(s.outputDone)
 	buf := make([]byte, 4096)
 	for {
 		n, err := s.runtime.Read(buf)
@@ -793,7 +799,10 @@ func (s *Session) processAdapterOutput(chunk []byte) {
 			Rows:     rows,
 			Cols:     cols,
 		}
-		for _, event := range s.parser.Process(update) {
+		s.parserMu.Lock()
+		parsed := s.parser.Process(update)
+		s.parserMu.Unlock()
+		for _, event := range parsed {
 			s.emitSemanticEvent(event)
 		}
 	}
@@ -853,7 +862,9 @@ func (s *Session) clearPendingForRawInput() {
 	s.semanticStatus = "terminal_ui_active"
 	s.mu.Unlock()
 	if observer, ok := s.parser.(harness.ActionObserver); ok {
+		s.parserMu.Lock()
 		observer.ActionResolved("raw_terminal_input")
+		s.parserMu.Unlock()
 	}
 	if s.publish != nil {
 		s.publish(events.TypeHarnessStatus, events.HarnessStatus{
@@ -892,7 +903,10 @@ func (s *Session) markSemanticIdle() {
 	s.semanticStatus = "idle"
 	s.mu.Unlock()
 	if provider, ok := s.parser.(harness.IdleEventProvider); ok {
-		for _, event := range provider.OnIdle() {
+		s.parserMu.Lock()
+		idleEvents := provider.OnIdle()
+		s.parserMu.Unlock()
+		for _, event := range idleEvents {
 			s.emitSemanticEvent(event)
 		}
 	}
@@ -921,6 +935,7 @@ func (s *Session) wait() {
 	defer close(s.done)
 	err := s.runtime.Wait()
 	_ = s.runtime.Close()
+	<-s.outputDone
 	s.buf.Close()
 	s.mu.Lock()
 	if s.semanticIdleTimer != nil {
@@ -928,6 +943,7 @@ func (s *Session) wait() {
 	}
 	s.pendingAction = nil
 	s.mu.Unlock()
+	s.flushSemanticOnExit()
 
 	now := time.Now()
 
@@ -981,6 +997,19 @@ func (s *Session) wait() {
 			ExitCode: -1,
 			Reason:   "unknown_error",
 		})
+	}
+}
+
+func (s *Session) flushSemanticOnExit() {
+	provider, ok := s.parser.(harness.IdleEventProvider)
+	if !ok {
+		return
+	}
+	s.parserMu.Lock()
+	finalEvents := provider.OnIdle()
+	s.parserMu.Unlock()
+	for _, event := range finalEvents {
+		s.emitSemanticEvent(event)
 	}
 }
 

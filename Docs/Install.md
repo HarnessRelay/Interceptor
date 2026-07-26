@@ -65,9 +65,39 @@ export PATH="$(harnessctl shims path):$PATH"
 
 Do not substitute one PATH entry for the other.
 
-## Starting the daemon
+## Running as a user service
 
-Start the user-level daemon in a terminal:
+On Linux with a systemd user manager, install and start the owned rootless unit:
+
+```bash
+harnessctl services install
+harnessctl services start
+harnessctl services enable
+```
+
+`install` writes
+`${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/harnessrelay.service` and reloads
+the user manager. It does not silently start or enable anything. `start` runs it
+now; `enable` starts it automatically at future logins.
+
+Inspect and control it with:
+
+```bash
+harnessctl services status
+harnessctl services logs
+harnessctl services restart
+harnessctl services stop
+harnessctl services disable
+harnessctl services uninstall
+```
+
+All commands use `systemctl --user`/`journalctl --user`; none require root.
+Uninstall refuses to remove an unmanaged unit. User lingering is not needed for
+login-time operation. Users who deliberately need the daemon before login or
+after logout can research `loginctl enable-linger`; HarnessRelay does not change
+that machine policy.
+
+On a non-systemd Linux environment, start the user-level daemon manually:
 
 ```bash
 harnessd serve
@@ -108,7 +138,7 @@ unreachable daemon is a diagnosed state, not a status-command crash.
 
 ## Installing shims
 
-Start the daemon, then install only the harnesses you want to intercept:
+Start the service, then install only the harnesses you want to intercept:
 
 ```bash
 harnessctl shims install codex opencode
@@ -191,8 +221,9 @@ recovery.
   `harnessctl shims path`, then run `harnessctl shims doctor`.
 - `token source: missing`: rerun `make install`, or set
   `HARNESSRELAY_TOKEN` explicitly.
-- daemon unreachable: start `harnessd serve` and inspect
-  `HARNESSRELAY_ADDR`.
+- daemon unreachable: run `harnessctl services status`, inspect
+  `harnessctl services logs`, then start/restart the service. On non-systemd
+  systems use `harnessd serve`.
 - install refuses a destination: inspect it. Use a different
   `HARNESSRELAY_BIN_DIR` or explicit `--force` for that exact install.
 - uninstall refuses a modified binary: preserve or move the local changes,
@@ -208,9 +239,9 @@ recovery.
 - uninstall preserves user configuration and data unless purge is explicit
 - Terminal Mode remains the raw source-of-truth fallback
 
-## Service status
+## Terminal recovery
 
-A systemd user service is deferred. `harnessd serve` remains the documented
-startup path. A future service feature must remain rootless, preserve the same
-token and localhost defaults, and first be added to the normative command
-nomenclature.
+The shim attach client restores terminal state on daemon disconnect and
+controllable termination signals. It prints the service restart command and a
+one-invocation direct bypass. `stty sane` is documented as last-resort recovery
+for uncatchable termination such as `SIGKILL`, not expected operation.

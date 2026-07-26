@@ -134,6 +134,7 @@ test("Shim session origin is visible without obscuring Terminal fallback", async
   await page.getByRole("button", { name: "Refresh sessions" }).click();
   await selectSession(page, sessionName);
   await expect(page.locator(".session-header")).toContainText("Shim · pty");
+  await expect(page.getByRole("note")).toContainText("Some terminal-entered prompts may only be visible in Terminal Mode");
   await expect(page.getByRole("button", { name: new RegExp(sessionName) })).toContainText("Shim");
   await page.getByRole("button", { name: "More session actions" }).click();
   await page.getByRole("menuitem", { name: "Open inspector" }).click();
@@ -595,6 +596,16 @@ test("Semantic adapter: fake Codex remains coherent across chat, terminal, appro
 
   await terminateCurrentSession(page);
   await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
+  await page.reload();
+  await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
+  await selectSession(page, sessionName);
+  await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
+  await expect(page.locator(".transcript")).toContainText(`semantic-send-${unique}`);
+  await expect(page.locator(".transcript")).toContainText(`Fake Codex response to: semantic-enter-${unique}`);
+  await selectSession(page, otherName);
+  await expect(page.locator(".transcript")).toContainText(`other-only-${unique}`);
+  await selectSession(page, sessionName);
+  await expect(page.locator(".transcript")).not.toContainText(`other-only-${unique}`);
   await expect(unexpectedErrors(errors)).toEqual([]);
 });
 

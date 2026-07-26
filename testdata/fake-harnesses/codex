@@ -53,5 +53,7 @@ try:
             write(f"\x1b[15;1H• Fake Codex response to: {prompt}\x1b[K")
             write("\x1b[18;1H› Write tests for @filename\x1b[K")
             write("\x1b[20;1Hgpt-fake high · /tmp/harnessrelay-fake\x1b[K")
+            if os.environ.get("HARNESSRELAY_FAKE_EXIT_AFTER_RESPONSE") == "1":
+                break
 finally:
     termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, original)

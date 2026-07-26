@@ -1153,6 +1153,17 @@ kbd {
   font-size: 0.71rem;
 }
 
+.terminal-control-notice {
+  width: min(var(--chat-rail), 100%);
+  margin: var(--space-3) auto 0;
+  border-left: 2px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .approval-card {
   display: flex;
   align-items: center;

@@ -62,6 +62,7 @@ Use plural resource groups for collections and their lifecycle:
 - `shims`
 - `sessions`
 - `adapters`
+- `services`
 
 Use singular nouns only for a deliberately internal namespace or when a
 command acts on one named mechanism rather than a collection. The internal
@@ -120,6 +121,27 @@ harnessctl sessions list
 Reserved for inspection and configuration of adapter resources. Adapter-native
 commands continue to flow through the session command catalog; do not add a
 top-level verb for each adapter.
+
+### `services`
+
+Owns installation and lifecycle of HarnessRelay user services:
+
+```bash
+harnessctl services install
+harnessctl services uninstall
+harnessctl services start
+harnessctl services stop
+harnessctl services restart
+harnessctl services enable
+harnessctl services disable
+harnessctl services status
+harnessctl services logs
+```
+
+The initial implementation manages only `harnessrelay.service`, a rootless
+systemd user unit. `install` creates the owned unit but does not silently start
+or enable it. `enable` controls login-time startup; `start` controls current
+runtime state. Do not use a singular top-level `service` alias.
 
 ## Approved Verbs
 
@@ -278,4 +300,3 @@ or put user workflows on the daemon binary.
 - Does uninstall preserve unmanaged files?
 - Does the name remain valid for Codex, OpenCode, Grok, and future harnesses?
 - Are the guideline, help, tests, and docs updated before implementation?
-

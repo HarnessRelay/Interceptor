@@ -8,6 +8,7 @@ state_home=${XDG_STATE_HOME:-"$HOME/.local/state"}
 config_dir="$config_home/harnessrelay"
 data_dir="$data_home/harnessrelay"
 state_dir="$state_home/harnessrelay"
+service_unit="$config_home/systemd/user/harnessrelay.service"
 manifest="$config_dir/install-manifest"
 purge=0
 remove_shims=0
@@ -53,6 +54,13 @@ fi
 if [ "$remove_shims" -eq 1 ] && [ -x "$bin_dir/harnessctl" ]; then
 	"$bin_dir/harnessctl" shims uninstall-all || {
 		printf '%s\n' "uninstall: shims could not be removed; binaries were left in place" >&2
+		exit 1
+	}
+fi
+
+if [ -e "$service_unit" ] && [ -x "$bin_dir/harnessctl" ]; then
+	"$bin_dir/harnessctl" services uninstall || {
+		printf '%s\n' "uninstall: user service could not be removed; binaries were left in place" >&2
 		exit 1
 	}
 fi

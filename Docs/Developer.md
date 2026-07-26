@@ -14,6 +14,7 @@
 - `internal/harness/fakesemantic`: explicitly enabled QA-only third adapter
 - `internal/pty`: PTY process runtime
 - `internal/security`: local token auth, CSRF, and origin helpers
+- `internal/service`: owned rootless systemd user-unit generation and lifecycle
 - `internal/shims`: user-local shim config, safe generated files, PATH
   diagnostics, real-binary resolution, and backend policy
 - `internal/session`: session manager and bounded terminal output buffer
@@ -122,6 +123,32 @@ Attach to a running session:
 ```
 
 Attach mode puts the local terminal in raw mode, forwards input through the daemon input API, streams output through the WebSocket event stream, sends resize updates on `SIGWINCH`, and restores local terminal state on exit. Detach with `Ctrl-]`.
+
+The attach path is also the terminal-safety boundary. Unexpected WebSocket or
+input API failure returns a typed daemon-disconnect error only after restoration.
+Controllable termination/suspend signals restore first. Regression coverage
+uses a disposable pseudo-terminal; never test this by changing the developer's
+actual terminal flags.
+
+## User Service Development
+
+`internal/service` owns only
+`${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/harnessrelay.service`. Generated
+units carry an exact ownership marker, use the absolute sibling `harnessd`,
+preserve normal XDG/token/localhost configuration, and do not enable or start
+during install.
+
+Tests inject a fake command runner and temporary unit path. CLI integration
+tests use `HARNESSRELAY_SERVICE_UNIT_PATH`,
+`HARNESSRELAY_DAEMON_BINARY`, `HARNESSRELAY_SYSTEMCTL`, and
+`HARNESSRELAY_JOURNALCTL` only to keep automated tests away from the real user
+manager.
+
+Focused checks:
+
+```bash
+go test ./internal/service ./cmd/harnessctl
+```
 
 ## Adding and Maintaining Harness Shims
 

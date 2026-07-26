@@ -462,6 +462,58 @@ func TestManagerCodexPromptSubmissionWithoutEventBus(t *testing.T) {
 	readUntil(t, output, "RECEIVED:without bus", 5*time.Second)
 }
 
+func TestFinishedSessionFlushesAndRetainsSemanticHistory(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: fixturePath(t, "codex"),
+		WorkDir: t.TempDir(),
+		Env:     []string{"HARNESSRELAY_FAKE_EXIT_AFTER_RESPONSE=1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := sess.Subscribe()
+	readUntil(t, output, "OpenAI Codex", 5*time.Second)
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "finish with history"); err != nil {
+		t.Fatal(err)
+	}
+	waitSessionDone(t, sess, 5*time.Second)
+
+	history := bus.History(sess.ID, 0, 1024)
+	var userMessage, assistantMessage bool
+	for _, event := range history {
+		switch event.Type {
+		case events.TypeChatUserMessage:
+			message := event.Data.(events.ChatMessage)
+			userMessage = message.Content == "finish with history"
+		case events.TypeChatAssistantMessage:
+			message := event.Data.(events.ChatMessage)
+			assistantMessage = message.Content == "Fake Codex response to: finish with history"
+		}
+	}
+	if !userMessage || !assistantMessage {
+		t.Fatalf("finished semantic history missing user=%v assistant=%v: %#v", userMessage, assistantMessage, history)
+	}
+
+	second, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "plain-output.sh")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitSessionDone(t, second, 5*time.Second)
+	if _, ok := mgr.Get(sess.ID); !ok {
+		t.Fatal("creating a second session removed the finished session")
+	}
+	afterSecond := bus.History(sess.ID, 0, 1024)
+	if len(afterSecond) != len(history) {
+		t.Fatalf("finished history changed after second session: before=%d after=%d", len(history), len(afterSecond))
+	}
+}
+
 func TestManagerCodexApprovalDenyIsEventBound(t *testing.T) {
 	bus := events.NewBus()
 	mgr := NewManagerWithBus(bus)

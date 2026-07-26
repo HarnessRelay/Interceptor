@@ -150,8 +150,11 @@ case ":${PATH:-}:" in
 		;;
 esac
 printf '%s\n' "Next steps:"
-printf '%s\n' "  1. Start the daemon: harnessd serve"
-printf '%s\n' "  2. Check status: harnessctl status"
-printf '%s\n' "  3. Install shims: harnessctl shims install codex opencode"
-printf '%s\n' '  4. Activate shims: export PATH="$(harnessctl shims path):$PATH"'
+printf '%s\n' "  1. Install the user service: harnessctl services install"
+printf '%s\n' "  2. Start it now: harnessctl services start"
+printf '%s\n' "  3. Start it at login: harnessctl services enable"
+printf '%s\n' "  4. Check status: harnessctl status"
+printf '%s\n' "  5. Install shims: harnessctl shims install codex opencode"
+printf '%s\n' '  6. Activate shims: export PATH="$(harnessctl shims path):$PATH"'
+printf '%s\n' "Manual fallback: harnessd serve"
 printf '\n%s\n' "No shell profile or harness shim was changed."

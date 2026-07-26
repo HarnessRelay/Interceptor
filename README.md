@@ -15,13 +15,15 @@ No mobile app, cloud relay, public service, enterprise multi-user control plane,
 
 ## Quick Start
 
-Install locally, add the CLI directory to PATH if requested, and start the
-daemon:
+Install locally, add the CLI directory to PATH if requested, then install and
+start the rootless user service:
 
 ```bash
 make install
 export PATH="$HOME/.local/bin:$PATH"
-harnessd serve
+harnessctl services install
+harnessctl services start
+harnessctl services enable
 ```
 
 Open:
@@ -42,6 +44,10 @@ export PATH="$(harnessctl shims path):$PATH"
 codex
 ```
 
+`services enable` starts the daemon automatically at future logins.
+`harnessctl services logs` reads its user journal. On systems without a
+systemd user manager, the manual fallback remains `harnessd serve`.
+
 Install does not edit shell profiles or create shims automatically. See
 [Docs/Install.md](Docs/Install.md) for update, safe uninstall, explicit purge,
 PATH troubleshooting, and security details.
@@ -61,9 +67,14 @@ harnessctl run --name shell /bin/bash
 harnessctl interrupt <session-id>
 harnessctl terminate <session-id>
 harnessctl attach <session-id>
+harnessctl services status
+harnessctl services logs
 ```
 
-`harnessctl attach` replays the current snapshot, streams live output, forwards local keyboard input, forwards local terminal resize, and detaches with `Ctrl-]`.
+`harnessctl attach` replays the current snapshot, streams live output, forwards
+local keyboard input and terminal resize, and detaches with `Ctrl-]`. If the
+daemon connection dies, it restores the local terminal before reporting the
+disconnect and exits non-zero.
 
 ### Transparent command shims
 
@@ -119,6 +130,13 @@ backend semantic status, metadata, user, assistant, system, and approval events.
 Codex assistant responses are reconstructed from a headless terminal screen
 after redraw activity settles; raw TUI chunks remain exclusively in Terminal
 Mode and never appear directly in the Chat transcript.
+
+Raw local terminal keystrokes do not provide a universally reliable semantic
+prompt boundary. Shim sessions therefore warn that some terminal-entered
+prompts may only be visible in Terminal Mode; HarnessRelay does not fabricate
+uncertain Chat messages. Completed semantic history remains inspectable for the
+daemon lifetime. Daemon-restart persistence remains deferred to the SQLite
+storage milestone.
 
 For verified Codex versions, the command palette exposes the harness's own
 slash commands through the semantic adapter. Commands that open native pickers

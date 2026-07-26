@@ -169,6 +169,13 @@ prompt and the final following `•` response block. Startup notices, composer
 placeholders, model footers, transient working text, and duplicate redraws are
 excluded.
 
+Local shim input is raw TUI input, not the semantic prompt API. Editing,
+multiline input, paste, completion, overlays, and enhanced keyboard modes make
+"bytes before Enter" an unsafe universal prompt reconstruction rule. The
+dashboard therefore shows an explicit terminal-control notice for shim
+sessions. It continues to reconstruct reliable adapter output, but does not
+invent uncertain user messages. Terminal Mode remains the complete record.
+
 ## Prompt Submission
 
 Chat sends:
@@ -271,6 +278,8 @@ destructive actions, and supplement rather than replace fake tests.
 - Model and other native pickers are launched from the unified palette but are
   completed in Terminal Mode.
 - Semantic/event history remains in memory and is lost on daemon restart.
+- Finished-session semantic history, including a final response flushed during
+  process exit, remains available for the daemon lifetime.
 - `codex app-server` is the preferred future structured source, but adopting it
   requires a separate session-ownership design.
 

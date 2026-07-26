@@ -21,7 +21,8 @@ from any directory:
 ```bash
 make install
 export PATH="$HOME/.local/bin:$PATH"
-harnessd serve
+harnessctl services install
+harnessctl services start
 ```
 
 This CLI PATH is separate from the shim PATH below. The installer does not
@@ -128,6 +129,12 @@ normally.
 Detach the local terminal with `Ctrl-]`. Detaching does not terminate the
 daemon-owned session.
 
+If the daemon dies, the local attach client treats the lost WebSocket as a
+failure, restores the controlling terminal synchronously, prints service
+restart/direct-bypass guidance, and exits non-zero. `stty sane` is backup
+recovery only. External termination and suspend handling also restore the
+terminal before the process exits or stops.
+
 ## Backends
 
 ### PTY
@@ -232,9 +239,10 @@ Common fixes:
   `--real-binary`.
 - “unmanaged file”: inspect it; use a different shim directory or explicit
   `--force` only if replacement is intended.
-- “daemon unavailable”: start `harnessd serve`, verify
+- “daemon unavailable”: use `harnessctl services status` and
+  `harnessctl services logs`, restart the service, verify
   `HARNESSRELAY_ADDR`/`HARNESSRELAY_TOKEN`, or accept the warned direct
-  fallback.
+  fallback. Use `harnessd serve` only as the non-systemd/manual fallback.
 - moved `harnessctl`: run `harnessctl shims reshim`.
 - `harnessctl: command not found`: install HarnessRelay and add
   `~/.local/bin` to PATH before diagnosing shim PATH.
@@ -243,6 +251,11 @@ Common fixes:
 
 - tmux is modeled and diagnosed but not yet a daemon-owned session backend.
 - daemon restart still loses in-memory session/event history.
+- finished session terminal and semantic history remains inspectable for the
+  daemon lifetime; restart persistence is deferred to the SQLite milestone.
+- raw shim keystrokes do not provide a reliable semantic prompt boundary for
+  arbitrary TUIs. Chat Mode warns that some terminal-entered prompts are
+  visible only in Terminal Mode rather than fabricating messages.
 - local detach survival is provided by the daemon process, not tmux.
 - shim config is JSON and currently has no general `harnessctl config` command.
 - profile editing is manual by design in this release.

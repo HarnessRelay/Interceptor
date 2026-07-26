@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -18,11 +19,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/harnessrelay/interceptor/internal/config"
+	"github.com/harnessrelay/interceptor/internal/service"
 	"github.com/harnessrelay/interceptor/internal/shims"
 )
 
@@ -90,6 +93,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return c.sessions(stdout)
 	case "shims":
 		return runShims(args[1:], stdout, stderr)
+	case "services":
+		return runServices(args[1:], stdout, stderr)
 	case "shim":
 		return c.runShim(args[1:], stdout, stderr)
 	case "run":
@@ -129,12 +134,69 @@ Usage:
   harnessctl terminate <session-id>
   harnessctl attach <session-id>       detach with Ctrl-]
   harnessctl shims <install|uninstall|uninstall-all|list|status|doctor|reshim|path>
+  harnessctl services <install|uninstall|start|stop|restart|enable|disable|status|logs>
 
 Environment:
   HARNESSRELAY_ADDR   default http://127.0.0.1:8765
   HARNESSRELAY_TOKEN  overrides the installed user-local token
   HARNESSRELAY_BYPASS set to 1 to execute a shim's real binary directly
 `)
+}
+
+func runServices(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprint(stdout, `Manage the rootless HarnessRelay systemd user service.
+
+Usage:
+  harnessctl services install
+  harnessctl services uninstall
+  harnessctl services start
+  harnessctl services stop
+  harnessctl services restart
+  harnessctl services enable
+  harnessctl services disable
+  harnessctl services status
+  harnessctl services logs
+`)
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("services commands accept exactly one verb")
+	}
+	manager, err := service.NewManager()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	switch args[0] {
+	case "install":
+		if err := manager.Install(ctx, stdout, stderr); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "installed %s\nStart now: harnessctl services start\nStart at login: harnessctl services enable\n", manager.UnitPath)
+	case "uninstall":
+		if err := manager.Uninstall(ctx, stdout, stderr); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "uninstalled %s\n", service.UnitName)
+	case "start":
+		return manager.Start(ctx, stdout, stderr)
+	case "stop":
+		return manager.Stop(ctx, stdout, stderr)
+	case "restart":
+		return manager.Restart(ctx, stdout, stderr)
+	case "enable":
+		return manager.Enable(ctx, stdout, stderr)
+	case "disable":
+		return manager.Disable(ctx, stdout, stderr)
+	case "status":
+		return manager.Status(ctx, stdout, stderr)
+	case "logs":
+		return manager.Logs(ctx, stdout, stderr)
+	default:
+		return fmt.Errorf("unknown services command: %s", args[0])
+	}
+	return nil
 }
 
 func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
@@ -181,14 +243,16 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 	stopResize := c.forwardResizeSignals(id, stdout)
 	defer stopResize()
 
-	restore, err := makeRaw(stdin)
+	terminal, err := makeRaw(stdin)
 	if err == nil {
-		defer restore()
+		defer terminal.Restore()
+		stopSignals := watchTerminalSignals(terminal)
+		defer stopSignals()
 	}
 
 	ws, err := c.openWebSocket("/api/v1/ws?session_id=" + url.QueryEscape(id) + "&after_seq=" + fmt.Sprint(snapshot.LatestSequence))
 	if err != nil {
-		return err
+		return disconnected(err, terminal)
 	}
 	defer ws.Close()
 
@@ -204,10 +268,14 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 	for {
 		select {
 		case err := <-outputErrCh:
-			if errors.Is(err, io.EOF) {
+			if err == nil {
 				return nil
 			}
-			return err
+			var exitErr processExitError
+			if errors.As(err, &exitErr) {
+				return err
+			}
+			return disconnected(err, terminal)
 		case err := <-inputErrCh:
 			if errors.Is(err, errDetach) {
 				return nil
@@ -216,7 +284,7 @@ func (c client) attach(id string, stdin *os.File, stdout io.Writer) error {
 				inputErrCh = nil
 				continue
 			}
-			return err
+			return disconnected(err, terminal)
 		}
 	}
 }
@@ -459,6 +527,36 @@ func (e processExitError) Error() string {
 	return fmt.Sprintf("managed command exited with status %d", e.code)
 }
 
+type daemonDisconnectedError struct {
+	cause    error
+	restored bool
+}
+
+func (e daemonDisconnectedError) Error() string {
+	state := "Terminal connection closed."
+	if e.restored {
+		state = "Restored terminal."
+	}
+	return fmt.Sprintf(`HarnessRelay daemon disconnected (%v). %s
+Recovery: stty sane
+Restart: harnessctl services restart
+Bypass: HARNESSRELAY_BYPASS=1 <command>`, e.cause, state)
+}
+
+func (e daemonDisconnectedError) Unwrap() error { return e.cause }
+
+func disconnected(cause error, terminal *rawTerminal) error {
+	restored := false
+	if terminal != nil {
+		if err := terminal.Restore(); err != nil {
+			cause = fmt.Errorf("%w; terminal restore failed: %v", cause, err)
+		} else {
+			restored = true
+		}
+	}
+	return daemonDisconnectedError{cause: cause, restored: restored}
+}
+
 func (c client) resizeFromTerminal(id string, stdout io.Writer) error {
 	file, ok := stdout.(*os.File)
 	if !ok {
@@ -493,7 +591,14 @@ func getWinsize(file *os.File) (winsize, error) {
 	return ws, nil
 }
 
-func makeRaw(file *os.File) (func(), error) {
+type rawTerminal struct {
+	file *os.File
+	old  syscall.Termios
+	mu   sync.Mutex
+	raw  bool
+}
+
+func makeRaw(file *os.File) (*rawTerminal, error) {
 	if file == nil {
 		return nil, errors.New("stdin is not a file")
 	}
@@ -512,9 +617,82 @@ func makeRaw(file *os.File) (func(), error) {
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&raw))); errno != 0 {
 		return nil, errno
 	}
+	return &rawTerminal{file: file, old: old, raw: true}, nil
+}
+
+func (t *rawTerminal) Restore() error {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.raw {
+		return nil
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, t.file.Fd(), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&t.old)))
+	if errno != 0 {
+		return errno
+	}
+	t.raw = false
+	return nil
+}
+
+func (t *rawTerminal) ReenterRaw() error {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.raw {
+		return nil
+	}
+	raw := t.old
+	raw.Iflag &^= syscall.BRKINT | syscall.ICRNL | syscall.INPCK | syscall.ISTRIP | syscall.IXON
+	raw.Oflag &^= syscall.OPOST
+	raw.Cflag |= syscall.CS8
+	raw.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.IEXTEN | syscall.ISIG
+	raw.Cc[syscall.VMIN] = 1
+	raw.Cc[syscall.VTIME] = 0
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, t.file.Fd(), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&raw))); errno != 0 {
+		return errno
+	}
+	t.raw = true
+	return nil
+}
+
+func watchTerminalSignals(terminal *rawTerminal) func() {
+	signals := []os.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGTSTP}
+	ch := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(ch, signals...)
+	go func() {
+		for {
+			select {
+			case received := <-ch:
+				_ = terminal.Restore()
+				signal.Reset(received)
+				sig, ok := received.(syscall.Signal)
+				if !ok {
+					continue
+				}
+				_ = syscall.Kill(os.Getpid(), sig)
+				if sig == syscall.SIGTSTP {
+					// Execution resumes here only after SIGCONT.
+					signal.Notify(ch, syscall.SIGTSTP)
+					_ = terminal.ReenterRaw()
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	var once sync.Once
 	return func() {
-		_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&old)))
-	}, nil
+		once.Do(func() {
+			signal.Stop(ch)
+			close(done)
+		})
+	}
 }
 
 func newClient() client {
@@ -565,6 +743,20 @@ func (c client) status(stdout io.Writer) error {
 	if shimErr != nil {
 		shimPath = "unavailable: " + shimErr.Error()
 	}
+	servicePath, servicePathErr := service.DefaultUnitPath()
+	serviceState := "not installed"
+	if servicePathErr != nil {
+		servicePath = "unavailable: " + servicePathErr.Error()
+		serviceState = "unavailable"
+	} else if content, err := os.ReadFile(servicePath); err == nil {
+		if service.IsManaged(content) {
+			serviceState = "installed (run: harnessctl services status)"
+		} else {
+			serviceState = "unmanaged file present"
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		serviceState = "unavailable: " + err.Error()
+	}
 
 	fmt.Fprintln(stdout, "HarnessRelay status")
 	fmt.Fprintf(stdout, "  version: %s\n", version)
@@ -590,6 +782,8 @@ func (c client) status(stdout io.Writer) error {
 	fmt.Fprintf(stdout, "  default install target: %s\n", installTarget)
 	fmt.Fprintf(stdout, "  config: %s\n", configPath)
 	fmt.Fprintf(stdout, "  shim path: %s\n", shimPath)
+	fmt.Fprintf(stdout, "  user service: %s\n", serviceState)
+	fmt.Fprintf(stdout, "  service unit: %s\n", servicePath)
 	return nil
 }
 

@@ -6,14 +6,20 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"unsafe"
 
+	"github.com/creack/pty"
+	"github.com/harnessrelay/interceptor/internal/service"
 	"github.com/harnessrelay/interceptor/internal/shims"
 )
 
@@ -38,7 +44,7 @@ func TestStatusCommand(t *testing.T) {
 	if !strings.Contains(out.String(), "harnessd ok (test)") {
 		t.Fatalf("output = %q", out.String())
 	}
-	for _, want := range []string{"daemon: reachable", "configured address:", "token source:", "active binary:", "PATH binary:", "config:", "shim path:"} {
+	for _, want := range []string{"daemon: reachable", "configured address:", "token source:", "active binary:", "PATH binary:", "config:", "shim path:", "user service:", "service unit:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("status output missing %q: %q", want, out.String())
 		}
@@ -187,6 +193,203 @@ func TestAttachReturnsManagedExitCode(t *testing.T) {
 	var exitErr processExitError
 	if !errors.As(err, &exitErr) || exitErr.code != 7 {
 		t.Fatalf("error = %v, want process exit 7", err)
+	}
+}
+
+func TestRawTerminalRestoreIsIdempotent(t *testing.T) {
+	master, terminalFile, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer terminalFile.Close()
+
+	before := terminalState(t, terminalFile)
+	raw, err := makeRaw(terminalFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	during := terminalState(t, terminalFile)
+	if during.Lflag&syscall.ICANON != 0 || during.Lflag&syscall.ECHO != 0 {
+		t.Fatalf("terminal was not made raw: lflag=%#x", during.Lflag)
+	}
+	if err := raw.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	after := terminalState(t, terminalFile)
+	if after != before {
+		t.Fatalf("terminal state was not restored\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func TestRawTerminalSignalHelper(t *testing.T) {
+	if os.Getenv("HARNESSRELAY_TEST_RAW_SIGNAL_HELPER") != "1" {
+		return
+	}
+	terminalFile := os.NewFile(3, "signal-test-terminal")
+	raw, err := makeRaw(terminalFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Restore()
+	stop := watchTerminalSignals(raw)
+	defer stop()
+	fmt.Println("READY")
+	select {}
+}
+
+func TestTerminationSignalRestoresRawTerminal(t *testing.T) {
+	master, terminalFile, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer terminalFile.Close()
+	before := terminalState(t, terminalFile)
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRawTerminalSignalHelper")
+	cmd.Env = append(os.Environ(), "HARNESSRELAY_TEST_RAW_SIGNAL_HELPER=1")
+	cmd.ExtraFiles = []*os.File{terminalFile}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || strings.TrimSpace(line) != "READY" {
+		t.Fatalf("helper readiness = %q, %v", line, err)
+	}
+	during := terminalState(t, terminalFile)
+	if during.Lflag&syscall.ICANON != 0 || during.Lflag&syscall.ECHO != 0 {
+		t.Fatalf("helper did not enter raw mode: lflag=%#x", during.Lflag)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	err = cmd.Wait()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("helper exit = %v, want signal exit", err)
+	}
+	after := terminalState(t, terminalFile)
+	if after != before {
+		t.Fatalf("SIGTERM left terminal changed\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func TestAttachRestoresTerminalAndReportsDaemonDisconnect(t *testing.T) {
+	master, terminalFile, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer terminalFile.Close()
+	before := terminalState(t, terminalFile)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sessions/ses_disconnect/snapshot":
+			_ = json.NewEncoder(w).Encode(map[string]any{"latest_seq": 0, "chunks": []any{}})
+		case "/api/v1/sessions/ses_disconnect":
+			_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{
+				"id": "ses_disconnect", "status": "running",
+			}})
+		case "/api/v1/sessions/ses_disconnect/resize":
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v1/ws":
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("server does not support hijacking")
+			}
+			conn, rw, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = fmt.Fprint(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test\r\n\r\n")
+			_ = rw.Flush()
+			_ = conn.Close()
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	c := client{baseURL: server.URL, http: server.Client()}
+	err = c.attach("ses_disconnect", terminalFile, io.Discard)
+	var disconnect daemonDisconnectedError
+	if !errors.As(err, &disconnect) {
+		t.Fatalf("attach error = %v, want daemonDisconnectedError", err)
+	}
+	for _, wanted := range []string{"Restored terminal.", "stty sane", "harnessctl services restart", "HARNESSRELAY_BYPASS=1"} {
+		if !strings.Contains(err.Error(), wanted) {
+			t.Fatalf("disconnect error missing %q: %v", wanted, err)
+		}
+	}
+	after := terminalState(t, terminalFile)
+	if after != before {
+		t.Fatalf("daemon disconnect left terminal changed\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func terminalState(t *testing.T, file *os.File) syscall.Termios {
+	t.Helper()
+	var state syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&state)))
+	if errno != 0 {
+		t.Fatal(errno)
+	}
+	return state
+}
+
+func TestServicesCLILifecycleUsesTemporaryOwnedUnit(t *testing.T) {
+	root := t.TempDir()
+	daemon := filepath.Join(root, "harnessd")
+	if err := os.WriteFile(daemon, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commandLog := filepath.Join(root, "commands.log")
+	systemctl := filepath.Join(root, "systemctl")
+	journalctl := filepath.Join(root, "journalctl")
+	script := "#!/bin/sh\nprintf '%s %s\\n' \"$(basename \"$0\")\" \"$*\" >> \"" + commandLog + "\"\nexit 0\n"
+	for _, path := range []string{systemctl, journalctl} {
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unitPath := filepath.Join(root, "config", service.UnitName)
+	t.Setenv("HARNESSRELAY_DAEMON_BINARY", daemon)
+	t.Setenv("HARNESSRELAY_SERVICE_UNIT_PATH", unitPath)
+	t.Setenv("HARNESSRELAY_SYSTEMCTL", systemctl)
+	t.Setenv("HARNESSRELAY_JOURNALCTL", journalctl)
+
+	var out bytes.Buffer
+	for _, verb := range []string{"install", "start", "status", "logs", "restart", "stop", "enable", "disable", "uninstall"} {
+		if err := run([]string{"services", verb}, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("services %s: %v", verb, err)
+		}
+	}
+	if _, err := os.Stat(unitPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("service unit remains after uninstall: %v", err)
+	}
+	logData, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	for _, wanted := range []string{
+		"systemctl --user daemon-reload",
+		"systemctl --user start " + service.UnitName,
+		"systemctl --user status --no-pager " + service.UnitName,
+		"journalctl --user --unit " + service.UnitName + " --no-pager",
+		"systemctl --user disable --now " + service.UnitName,
+	} {
+		if !strings.Contains(logText, wanted) {
+			t.Fatalf("command log missing %q:\n%s", wanted, logText)
+		}
 	}
 }
 

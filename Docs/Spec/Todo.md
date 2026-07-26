@@ -902,8 +902,51 @@ and usable from PATH before real shim dogfooding.
 - [x] Update README, shims, developer, and Todo documentation.
 - [x] Complete full Go, Make, frontend, Playwright, temporary-HOME install,
   fake-shim dogfooding, and installed Codex-resolution gates.
-- [ ] Consider a rootless systemd user service after its command/API contract
+- [x] Consider a rootless systemd user service after its command/API contract
   is added to the normative nomenclature.
+
+# Phase 19 — Dogfood Continuity And User Service
+
+Goal: make shim sessions fail safely, keep completed semantic history useful,
+and remove manual daemon startup from the normal workflow.
+
+## 19.1 Research
+
+- [x] Research rootless systemd user service design and command ownership.
+- [x] Audit daemon-owned PTY and local raw-terminal failure boundaries.
+- [x] Audit daemon-lifetime and restart session/history persistence.
+- [x] Document reliable limits of terminal-entered semantic reconstruction.
+
+## 19.2 User service
+
+- [x] Implement owned rootless systemd user-unit generation.
+- [x] Add `harnessctl services` install/uninstall/start/stop/restart/status,
+  enable/disable, and logs commands.
+- [x] Test service file ownership and command execution with temporary paths
+  and fake system commands.
+
+## 19.3 Shim terminal safety
+
+- [x] Restore terminal state on daemon disconnect and controllable signals.
+- [x] Report daemon loss, recovery, service restart, and direct bypass clearly.
+- [x] Add automated pseudo-terminal daemon-death regression coverage.
+
+## 19.4 Finished history and semantic limits
+
+- [x] Flush pending adapter output before session exit.
+- [x] Verify completed-session event history survives selection and a second
+  session for the daemon lifetime.
+- [x] Show the terminal-controlled prompt reconstruction limitation in Chat
+  Mode without fabricating uncertain messages.
+- [x] Document daemon-restart persistence as deferred to the SQLite milestone.
+
+## 19.5 Setup, QA, and gates
+
+- [x] Add `Docs/QA/Dogfood-QA.md` and track DOGFOOD-001 through DOGFOOD-004.
+- [x] Update install, shim, semantic, developer, README, and install output
+  guidance.
+- [x] Run all Go, Make, web build, Playwright, install/service, fake-shim, and
+  daemon-death terminal gates.
 
 Use this template when adding new tasks.
 
