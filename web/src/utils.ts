@@ -58,7 +58,7 @@ export type ChatProjection = {
   text: string;
 };
 
-const terminalStatusMessage = "Terminal interface output is available in Terminal Mode. Chat Mode could not convert this PTY redraw into readable chat.";
+const terminalStatusMessage = "This session is using a terminal UI. Open Terminal Mode for the live screen; Chat Mode will keep your sent prompts here and only show plain text when it is safe to extract.";
 const boxDrawingPattern = /[┌┐└┘├┤┬┴┼─│╭╮╰╯═║╔╗╚╝╠╣╦╩╬]/;
 const mojibakePattern = /(?:â[\u0080-\u00bf]?|ã[\u0080-\u00bf]?|�|□|â□)/;
 
@@ -74,11 +74,21 @@ export function projectTerminalOutputForChat(raw: string): ChatProjection {
 function looksLikeTerminalRedraw(raw: string, text: string): boolean {
   if (/\x1b\[\?1049[hl]/.test(raw) || /\x1b\[\?25[hl]/.test(raw)) return true;
   if (boxDrawingPattern.test(text) || mojibakePattern.test(text)) return true;
+  if (looksLikeTUIFragment(raw, text)) return true;
   if (looksLikeRepeatedArtifact(text)) return true;
 
   const controlMatches = raw.match(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[()][0-2AB])/g) || [];
   const redrawControls = raw.match(/\x1b\[[0-?]*(?:[HJKST]|[0-9]+;[0-9]+[Hf])/g) || [];
   return controlMatches.length >= 8 && redrawControls.length >= 2;
+}
+
+function looksLikeTUIFragment(raw: string, text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+  if (raw.includes("\r") && normalized.length <= 3) return true;
+  if (/^[A-Z]{1,4}$/.test(normalized)) return true;
+  if (/^[#_=~*.-]{1,12}$/.test(normalized)) return true;
+  return false;
 }
 
 function looksLikeRepeatedArtifact(text: string): boolean {

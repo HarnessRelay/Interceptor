@@ -4,18 +4,23 @@ import type { EventEnvelope, Session } from "../types";
 import { decodeBase64, isLive, projectTerminalOutputForChat, terminalOutputText } from "../utils";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 
-type ChatMessage = {
+export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
   ts: string;
 };
 
+export type ChatMessagesUpdater = ChatMessage[] | ((current: ChatMessage[]) => ChatMessage[]);
+type ActivityState = "connecting" | "ready" | "thinking" | "streaming" | "terminal" | "ended";
+
 const terminalStatusMessageID = "terminal-output-status";
 
 export function ChatView({
   session,
   events,
+  messages,
+  setMessages,
   onOpenTerminal,
   onSessionUpdate,
   onEvent,
@@ -23,16 +28,19 @@ export function ChatView({
 }: {
   session: Session;
   events: EventEnvelope[];
+  messages: ChatMessage[];
+  setMessages: (sessionID: string, updater: ChatMessagesUpdater) => void;
   onOpenTerminal: () => void;
   onSessionUpdate: () => void;
   onEvent: (event: EventEnvelope) => void;
   onError: (message: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
+  const [activity, setActivity] = useState<ActivityState>(isLive(session.status) ? "connecting" : "ended");
   const [slashOpen, setSlashOpen] = useState(false);
   const latestSeq = useRef(0);
+  const activityTimer = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -43,19 +51,23 @@ export function ChatView({
       .then((snapshot) => {
         latestSeq.current = snapshot.latest_seq || 0;
         const projection = projectTerminalOutputForChat(snapshot.chunks.map((chunk) => decodeBase64(chunk.bytes)).join(""));
-        if (projection.text) {
-          setMessages([{ id: projection.kind === "terminal" ? terminalStatusMessageID : "snapshot", role: projection.kind === "terminal" ? "system" : "assistant", text: projection.text, ts: new Date().toISOString() }]);
-        } else {
-          setMessages([{ id: "empty", role: "system", text: "No readable output yet. The raw terminal remains available as the source of truth.", ts: new Date().toISOString() }]);
-        }
+        const hydratedMessages = snapshotMessages(projection, new Date().toISOString());
+        setMessages(session.id, (current) => current.length > 0 ? current : hydratedMessages);
       })
       .catch((err: Error) => onError(err.message))
       .finally(() => {
         if (disposed) return;
+        onSessionUpdate();
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws?session_id=${encodeURIComponent(session.id)}&after_seq=${latestSeq.current}`);
-        socket.onopen = () => setConnected(true);
-        socket.onclose = () => setConnected(false);
+        socket.onopen = () => {
+          setConnected(true);
+          setActivity((current) => current === "connecting" ? "ready" : current);
+        };
+        socket.onclose = () => {
+          setConnected(false);
+          setActivity(isLive(session.status) ? "connecting" : "ended");
+        };
         socket.onerror = () => onError("WebSocket stream failed.");
         socket.onmessage = (message) => {
           const event = JSON.parse(message.data) as EventEnvelope;
@@ -69,9 +81,16 @@ export function ChatView({
     return () => {
       disposed = true;
       socket?.close();
+      clearActivityTimer();
       setConnected(false);
     };
-  }, [session.id, onError, onEvent, onSessionUpdate]);
+  }, [session.id, setMessages, onError, onEvent, onSessionUpdate]);
+
+  useEffect(() => {
+    if (!isLive(session.status)) setActivity("ended");
+    else if (!connected) setActivity("connecting");
+    else setActivity((current) => current === "ended" || current === "connecting" ? "ready" : current);
+  }, [session.status, connected]);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
@@ -85,7 +104,9 @@ export function ChatView({
   function appendAssistantOutput(event: EventEnvelope) {
     const projection = projectTerminalOutputForChat(terminalOutputText(event.data));
     if (!projection.text) return;
-    setMessages((current) => {
+    setActivity(projection.kind === "terminal" ? "terminal" : "streaming");
+    scheduleReadyState();
+    setMessages(session.id, (current) => {
       if (projection.kind === "terminal") {
         if (current.some((message) => message.id === terminalStatusMessageID)) return current;
         const withoutEmpty = current.filter((message) => message.id !== "empty");
@@ -108,12 +129,27 @@ export function ChatView({
     const value = prompt.trim();
     if (!value || !isLive(session.status)) return;
     setPrompt("");
-    setMessages((current) => [...current, { id: `user-${Date.now()}`, role: "user", text: value, ts: new Date().toISOString() }]);
+    setActivity("thinking");
+    setMessages(session.id, (current) => [...current, { id: `user-${Date.now()}`, role: "user", text: value, ts: new Date().toISOString() }]);
     try {
       await api.sendPrompt(session.id, value);
     } catch (err) {
       onError((err as Error).message);
     }
+  }
+
+  function clearActivityTimer() {
+    if (activityTimer.current === null) return;
+    window.clearTimeout(activityTimer.current);
+    activityTimer.current = null;
+  }
+
+  function scheduleReadyState() {
+    clearActivityTimer();
+    activityTimer.current = window.setTimeout(() => {
+      if (isLive(session.status)) setActivity("ready");
+      activityTimer.current = null;
+    }, 1400);
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -140,11 +176,11 @@ export function ChatView({
       if (action === "tab") await api.key(session.id, "Tab");
       if (action === "enter") await api.key(session.id, "Enter");
       if (action === "terminal") onOpenTerminal();
-      if (action === "clear") setMessages([]);
+      if (action === "clear") setMessages(session.id, []);
       if (action === "snapshot") {
         const snapshot = await api.snapshot(session.id);
         const projection = projectTerminalOutputForChat(snapshot.chunks.map((chunk) => decodeBase64(chunk.bytes)).join(""));
-        setMessages(projection.text ? [{ id: projection.kind === "terminal" ? terminalStatusMessageID : `snapshot-${Date.now()}`, role: projection.kind === "terminal" ? "system" : "assistant", text: projection.text, ts: new Date().toISOString() }] : []);
+        setMessages(session.id, projection.text ? [{ id: projection.kind === "terminal" ? terminalStatusMessageID : `snapshot-${Date.now()}`, role: projection.kind === "terminal" ? "system" : "assistant", text: projection.text, ts: new Date().toISOString() }] : []);
       }
       await onSessionUpdate();
     } catch (err) {
@@ -156,8 +192,8 @@ export function ChatView({
     <section className="chat-view" aria-label="Chat mode">
       <div className="chat-main">
         <div className="chat-status-row">
-          <span className={connected ? "stream-state is-connected" : "stream-state"}>{connected ? "Live output" : "Connecting"}</span>
-          <span>Raw terminal is source of truth</span>
+          <span className={activityClassName(activity)}>{activityLabel(activity)}</span>
+          <span>{activityDescription(activity)}</span>
           <button onClick={onOpenTerminal}>Open Terminal</button>
         </div>
         {semanticEvents.length > 0 && (
@@ -192,4 +228,37 @@ export function ChatView({
       </form>
     </section>
   );
+}
+
+function snapshotMessages(projection: ReturnType<typeof projectTerminalOutputForChat>, ts: string): ChatMessage[] {
+  if (projection.text) {
+    return [{ id: projection.kind === "terminal" ? terminalStatusMessageID : "snapshot", role: projection.kind === "terminal" ? "system" : "assistant", text: projection.text, ts }];
+  }
+  return [{ id: "empty", role: "system", text: "No readable output yet. The raw terminal remains available as the source of truth.", ts }];
+}
+
+function activityClassName(activity: ActivityState): string {
+  return `stream-state activity-${activity} ${activity === "ready" || activity === "streaming" ? "is-connected" : ""}`.trim();
+}
+
+function activityLabel(activity: ActivityState): string {
+  switch (activity) {
+    case "connecting": return "Connecting";
+    case "thinking": return "Input sent";
+    case "streaming": return "Streaming text";
+    case "terminal": return "Terminal UI active";
+    case "ended": return "Session ended";
+    case "ready": return "Ready";
+  }
+}
+
+function activityDescription(activity: ActivityState): string {
+  switch (activity) {
+    case "connecting": return "Opening the live event stream";
+    case "thinking": return "Waiting for the harness to respond";
+    case "streaming": return "Plain text output is being added below";
+    case "terminal": return "Live screen output is available in Terminal Mode";
+    case "ended": return "This harness process has exited";
+    case "ready": return "Connected and waiting for input";
+  }
 }

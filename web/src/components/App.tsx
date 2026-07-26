@@ -7,9 +7,11 @@ import { LoginScreen } from "./LoginScreen";
 import { SessionHeader } from "./SessionHeader";
 import { Sidebar } from "./Sidebar";
 import { ChatView } from "./ChatView";
+import type { ChatMessage, ChatMessagesUpdater } from "./ChatView";
 import { TerminalView } from "./TerminalView";
 
 const modeStoragePrefix = "harnessrelay.sessionMode.";
+const chatMessagesStorageKey = "harnessrelay.chatMessages";
 
 export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -19,6 +21,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [modeBySession, setModeBySession] = useState<Record<string, ViewMode>>({});
+  const [chatMessagesBySession, setChatMessagesBySession] = useState<Record<string, ChatMessage[]>>(readStoredChatMessages);
 
   const active = useMemo(
     () => sessions.find((session) => session.id === activeID) || null,
@@ -37,6 +40,10 @@ export function App() {
       }
       return nextModes;
     });
+    setChatMessagesBySession((current) => {
+      const sessionIDs = new Set(next.map((session) => session.id));
+      return Object.fromEntries(Object.entries(current).filter(([sessionID]) => sessionIDs.has(sessionID)));
+    });
   }, []);
 
   useEffect(() => {
@@ -51,6 +58,10 @@ export function App() {
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }, [refreshSessions]);
+
+  useEffect(() => {
+    writeStoredChatMessages(chatMessagesBySession);
+  }, [chatMessagesBySession]);
 
   const handleLogin = async (token: string) => {
     const status = await api.login(token);
@@ -81,7 +92,16 @@ export function App() {
     setEvents((current) => [event, ...current].slice(0, 120));
   }, []);
 
+  const setChatMessages = useCallback((sessionID: string, updater: ChatMessagesUpdater) => {
+    setChatMessagesBySession((current) => {
+      const existing = current[sessionID] || [];
+      const messages = typeof updater === "function" ? updater(existing) : updater;
+      return { ...current, [sessionID]: messages };
+    });
+  }, []);
+
   const activeEvents = events.filter((event) => !activeID || event.session_id === activeID);
+  const activeMessages = active ? chatMessagesBySession[active.id] || [] : [];
 
   if (!authenticated) {
     return <LoginScreen loading={loading} error={error} onLogin={handleLogin} onError={setError} />;
@@ -121,6 +141,8 @@ export function App() {
               <ChatView
                 session={active}
                 events={activeEvents}
+                messages={activeMessages}
+                setMessages={setChatMessages}
                 onOpenTerminal={() => setSessionMode(active.id, "terminal")}
                 onSessionUpdate={updateActiveSession}
                 onEvent={handleSessionEvent}
@@ -148,4 +170,39 @@ export function App() {
 function readStoredMode(sessionID: string): ViewMode | null {
   const value = localStorage.getItem(modeStoragePrefix + sessionID);
   return value === "chat" || value === "terminal" ? value : null;
+}
+
+function readStoredChatMessages(): Record<string, ChatMessage[]> {
+  try {
+    const raw = sessionStorage.getItem(chatMessagesStorageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const messagesBySession: Record<string, ChatMessage[]> = {};
+    for (const [sessionID, messages] of Object.entries(parsed)) {
+      if (!Array.isArray(messages)) continue;
+      const validMessages = messages.filter(isChatMessage);
+      if (validMessages.length > 0) messagesBySession[sessionID] = validMessages;
+    }
+    return messagesBySession;
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredChatMessages(messagesBySession: Record<string, ChatMessage[]>) {
+  try {
+    sessionStorage.setItem(chatMessagesStorageKey, JSON.stringify(messagesBySession));
+  } catch {
+    // Losing reload-only transcript cache should not break the live dashboard.
+  }
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Partial<ChatMessage>;
+  return typeof message.id === "string" &&
+    (message.role === "user" || message.role === "assistant" || message.role === "system") &&
+    typeof message.text === "string" &&
+    typeof message.ts === "string";
 }

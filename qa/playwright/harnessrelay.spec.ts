@@ -85,6 +85,7 @@ test("Screen 4: Chat Mode with simple shell", async ({ page }) => {
 
   const unique = Date.now();
   await createSession(page, { name: `pw-shell-${unique}`, command: "/bin/bash", cwd: "/tmp", mode: "chat" });
+  await expect(page.locator(".chat-status-row")).toContainText(/Ready|Streaming text/);
 
   await sendChat(page, `echo chat-mode-works-${unique}`);
   await expect(page.locator(".transcript")).toContainText(`chat-mode-works-${unique}`);
@@ -113,6 +114,11 @@ test("Screen 4: Chat Mode with simple shell", async ({ page }) => {
   await sendRaw(page, `echo terminal-mode-works-${unique}\n`);
   await expect(page.locator("body")).toContainText(`terminal-mode-works-${unique}`);
   await page.screenshot({ path: `${screenshotDir}/terminal-mode.png`, fullPage: true });
+
+  await page.getByRole("button", { name: "Open Chat" }).click();
+  await expect(page.locator(".chat-view")).toBeVisible();
+  await expect(page.locator(".transcript .message-user", { hasText: `echo chat-mode-works-${unique}` })).toBeVisible();
+  await expect(page.locator(".transcript .message-assistant", { hasText: `chat-mode-works-${unique}` })).toBeVisible();
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Terminate", exact: true }).click();
@@ -187,7 +193,7 @@ test("QA-002: Chat Mode suppresses live noisy TUI artifacts consistently", async
   await createSession(page, { name: sessionName, command: "/bin/sh", args: scriptPath, cwd: "/tmp", mode: "chat" });
 
   const transcript = page.locator(".transcript");
-  await expect(transcript).toContainText("Terminal interface output is available in Terminal Mode");
+  await expect(transcript).toContainText("This session is using a terminal UI");
   await expect(transcript).not.toContainText("MMMMMMMM");
   await expectNoChatGarbage(transcript);
   expect(await page.evaluate(() => (window as Window & { __qaSawNoisyChat?: boolean }).__qaSawNoisyChat)).toBe(false);
@@ -195,13 +201,13 @@ test("QA-002: Chat Mode suppresses live noisy TUI artifacts consistently", async
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await waitForSnapshotText(page, sessionName, "MMMMMMMM");
   await page.getByRole("button", { name: "Open Chat" }).click();
-  await expect(page.locator(".transcript")).toContainText("Terminal interface output is available in Terminal Mode");
+  await expect(page.locator(".transcript")).toContainText("This session is using a terminal UI");
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
 
   await page.reload();
   await expect(page.locator(".create-form")).toBeVisible();
   await selectSession(page, sessionName);
-  await expect(page.locator(".transcript")).toContainText("Terminal interface output is available in Terminal Mode");
+  await expect(page.locator(".transcript")).toContainText("This session is using a terminal UI");
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
   await expect(errors).toEqual([]);
 });
@@ -369,7 +375,8 @@ test("QA-001: Chat Mode suppresses full-screen TUI redraw garbage", async ({ pag
   });
 
   const transcript = page.locator(".transcript");
-  await expect(transcript).toContainText("Terminal interface output is available in Terminal Mode");
+  await expect(transcript).toContainText("This session is using a terminal UI");
+  await expect(page.locator(".chat-status-row")).toContainText(/Terminal UI active|Session ended/);
   await expectNoChatGarbage(transcript);
   await expect(page.getByRole("button", { name: "Open Terminal" })).toBeVisible();
   await page.screenshot({ path: `${screenshotDir}/chat-codex.png`, fullPage: true });
@@ -402,7 +409,8 @@ test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
   await login(page);
   await createSession(page, { name: `codex-qa-${Date.now()}`, command: "codex", cwd, mode: "chat" });
   await expect(page.getByRole("button", { name: "Open Terminal" })).toBeVisible();
-  await expect(page.locator(".transcript")).toContainText(/Terminal interface output is available in Terminal Mode|No readable output yet|Readable output will appear/);
+  await expect(page.locator(".chat-status-row")).toContainText(/Ready|Terminal UI active|Streaming text/);
+  await expect(page.locator(".transcript")).toContainText(/This session is using a terminal UI|No readable output yet|Readable output will appear/);
   await expectNoChatGarbage(page.locator(".transcript"));
 
   const prompt = "Summarize this tiny test repository. Do not edit files and do not run destructive commands.";

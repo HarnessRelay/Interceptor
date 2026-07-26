@@ -83,6 +83,7 @@ export function TerminalView({
       .catch((err: Error) => onError(err.message))
       .finally(() => {
         if (disposed) return;
+        onSessionUpdate();
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws?session_id=${encodeURIComponent(session.id)}&after_seq=${latestSeq.current}`);
         socket.onopen = () => setConnected(true);
