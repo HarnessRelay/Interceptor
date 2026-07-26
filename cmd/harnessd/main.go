@@ -19,6 +19,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/logging"
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
+	dashboard "github.com/harnessrelay/interceptor/web"
 )
 
 const version = "dev"
@@ -70,7 +71,7 @@ func serve() error {
 	authToken := cfg.Security.AuthToken
 	if authToken == "" {
 		authToken = security.GenerateToken()
-		logger.Warn("generated local dashboard token for this process; set HARNESSRELAY_TOKEN to provide a stable token",
+		logger.Warn("generated local dashboard token for this process; run make install or set HARNESSRELAY_TOKEN for a stable token",
 			slog.String("local_auth_token", authToken),
 		)
 	}
@@ -138,8 +139,5 @@ func serve() error {
 }
 
 func dashboardFS() fs.FS {
-	if info, err := os.Stat("web/dist"); err == nil && info.IsDir() {
-		return os.DirFS("web/dist")
-	}
-	return os.DirFS("web")
+	return dashboard.FS()
 }

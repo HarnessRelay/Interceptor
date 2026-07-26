@@ -15,12 +15,13 @@ No mobile app, cloud relay, public service, enterprise multi-user control plane,
 
 ## Quick Start
 
-Set a stable local token, build, and start the daemon:
+Install locally, add the CLI directory to PATH if requested, and start the
+daemon:
 
 ```bash
-export HARNESSRELAY_TOKEN="$(openssl rand -base64 32)"
-make build
-./bin/harnessd serve
+make install
+export PATH="$HOME/.local/bin:$PATH"
+harnessd serve
 ```
 
 Open:
@@ -29,35 +30,37 @@ Open:
 http://127.0.0.1:8765/
 ```
 
-Enter the token in the dashboard login screen. If `HARNESSRELAY_TOKEN` is not set, `harnessd` generates a process-local token and prints it once at startup.
-
-Health remains public:
-
-```bash
-curl http://127.0.0.1:8765/api/v1/health
-```
-
-Authenticated API example:
+Install creates a stable token at `~/.config/harnessrelay/token`.
+`harnessd` and `harnessctl` read it automatically;
+`HARNESSRELAY_TOKEN` overrides it. Check setup and opt into a shim from another
+terminal:
 
 ```bash
-curl -H "Authorization: Bearer $HARNESSRELAY_TOKEN" \
-  http://127.0.0.1:8765/api/v1/sessions
+harnessctl status
+harnessctl shims install codex
+export PATH="$(harnessctl shims path):$PATH"
+codex
 ```
+
+Install does not edit shell profiles or create shims automatically. See
+[Docs/Install.md](Docs/Install.md) for update, safe uninstall, explicit purge,
+PATH troubleshooting, and security details.
 
 ## CLI
 
-`harnessctl` uses `HARNESSRELAY_ADDR` and `HARNESSRELAY_TOKEN`.
+`harnessctl` uses `HARNESSRELAY_ADDR` and the shared stable token. Environment
+token configuration remains supported and has precedence.
 
 ```bash
 export HARNESSRELAY_ADDR=http://127.0.0.1:8765
 export HARNESSRELAY_TOKEN=...
 
-./bin/harnessctl status
-./bin/harnessctl sessions
-./bin/harnessctl run --name shell /bin/bash
-./bin/harnessctl interrupt <session-id>
-./bin/harnessctl terminate <session-id>
-./bin/harnessctl attach <session-id>
+harnessctl status
+harnessctl sessions
+harnessctl run --name shell /bin/bash
+harnessctl interrupt <session-id>
+harnessctl terminate <session-id>
+harnessctl attach <session-id>
 ```
 
 `harnessctl attach` replays the current snapshot, streams live output, forwards local keyboard input, forwards local terminal resize, and detaches with `Ctrl-]`.
@@ -68,7 +71,7 @@ Install user-local shims, prepend their directory to PATH, then keep using the
 normal harness commands:
 
 ```bash
-./bin/harnessctl shims install codex opencode grok
+harnessctl shims install codex opencode grok
 export PATH="$HOME/.local/share/harnessrelay/shims:$PATH"
 
 codex
@@ -192,6 +195,8 @@ Fake harnesses live under `testdata/fake-harnesses/` and cover plain output, int
 - [Docs/Developer.md](Docs/Developer.md): project structure, tests, adapters, and fake harnesses
 - [Docs/Shims.md](Docs/Shims.md): transparent command shim installation,
   runtime, fallback, safety, and troubleshooting
+- [Docs/Install.md](Docs/Install.md): user-local install, PATH, stable token,
+  update, uninstall, purge, and recovery
 - [Docs/Architecture/Command-Nomenclature.md](Docs/Architecture/Command-Nomenclature.md):
   normative CLI resource/verb taxonomy
 - [Docs/Semantic-Adapters.md](Docs/Semantic-Adapters.md): adapter contracts,

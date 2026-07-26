@@ -1,9 +1,18 @@
-.PHONY: build fmt run test
+.PHONY: build fmt install run test uninstall update
 
 build:
 	npm --prefix web run build
 	go build -o bin/harnessd ./cmd/harnessd
 	go build -o bin/harnessctl ./cmd/harnessctl
+
+install:
+	./scripts/install.sh
+
+update:
+	./scripts/install.sh --update
+
+uninstall:
+	./scripts/uninstall.sh
 
 fmt:
 	gofmt -w ./cmd ./internal
@@ -13,3 +22,4 @@ run:
 
 test:
 	go test ./...
+	./scripts/install_test.sh

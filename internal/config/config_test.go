@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -36,8 +37,79 @@ func TestLoadSecurityEnvironment(t *testing.T) {
 	if cfg.Security.AuthToken != "local-secret" {
 		t.Fatalf("AuthToken = %q, want local-secret", cfg.Security.AuthToken)
 	}
+	if cfg.Security.AuthTokenSource != "env" {
+		t.Fatalf("AuthTokenSource = %q, want env", cfg.Security.AuthTokenSource)
+	}
 	if !cfg.Security.AllowRootForTesting {
 		t.Fatal("AllowRootForTesting = false, want true")
+	}
+}
+
+func TestLoadSecurityTokenFileAndEnvironmentOverride(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HARNESSRELAY_TOKEN", "")
+	tokenPath := filepath.Join(root, "harnessrelay", "token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Security.AuthToken != "file-secret" || cfg.Security.AuthTokenSource != "config" {
+		t.Fatalf("file auth = %q from %q", cfg.Security.AuthToken, cfg.Security.AuthTokenSource)
+	}
+
+	t.Setenv("HARNESSRELAY_TOKEN", "env-secret")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Security.AuthToken != "env-secret" || cfg.Security.AuthTokenSource != "env" {
+		t.Fatalf("override auth = %q from %q", cfg.Security.AuthToken, cfg.Security.AuthTokenSource)
+	}
+}
+
+func TestLoadUserConfigWithEnvironmentOverride(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	path := filepath.Join(root, "harnessrelay", "interceptor.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("bind_address = \"localhost\"\nport = 9123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BindAddress != "localhost" || cfg.Port != 9123 {
+		t.Fatalf("file config address = %s", cfg.Address())
+	}
+	t.Setenv("HARNESSRELAY_PORT", "9234")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Port != 9234 {
+		t.Fatalf("environment did not override config port: %d", cfg.Port)
+	}
+}
+
+func TestResolveAuthTokenMissing(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HARNESSRELAY_TOKEN", "")
+	token, source, err := ResolveAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" || source != "missing" {
+		t.Fatalf("token = %q, source = %q", token, source)
 	}
 }
 

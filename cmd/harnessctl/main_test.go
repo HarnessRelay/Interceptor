@@ -38,6 +38,56 @@ func TestStatusCommand(t *testing.T) {
 	if !strings.Contains(out.String(), "harnessd ok (test)") {
 		t.Fatalf("output = %q", out.String())
 	}
+	for _, want := range []string{"daemon: reachable", "configured address:", "token source:", "active binary:", "PATH binary:", "config:", "shim path:"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("status output missing %q: %q", want, out.String())
+		}
+	}
+}
+
+func TestStatusReportsUnreachableWithoutFailing(t *testing.T) {
+	c := client{
+		baseURL:     "http://127.0.0.1:1",
+		tokenSource: "missing",
+		http: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("daemon offline")
+		})},
+	}
+	var out bytes.Buffer
+	if err := c.status(&out); err != nil {
+		t.Fatalf("status returned error: %v", err)
+	}
+	if !strings.Contains(out.String(), "daemon: unreachable") || !strings.Contains(out.String(), "token source: missing") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestNewClientReadsConfigTokenWithEnvironmentOverride(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HARNESSRELAY_TOKEN", "")
+	tokenPath := filepath.Join(root, "harnessrelay", "token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("config-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := newClient()
+	if c.token != "config-token" || c.tokenSource != "config" {
+		t.Fatalf("client token = %q from %q", c.token, c.tokenSource)
+	}
+	t.Setenv("HARNESSRELAY_TOKEN", "env-token")
+	c = newClient()
+	if c.token != "env-token" || c.tokenSource != "env" {
+		t.Fatalf("override token = %q from %q", c.token, c.tokenSource)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
 
 func TestReadWebSocketFrame(t *testing.T) {

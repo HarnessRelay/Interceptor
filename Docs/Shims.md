@@ -15,7 +15,20 @@ daemon-owned session, and attaches the current terminal.
 
 ## Install
 
-Build/install `harnessctl`, start `harnessd`, and install selected shims:
+First install HarnessRelay itself so `harnessctl` and `harnessd` are available
+from any directory:
+
+```bash
+make install
+export PATH="$HOME/.local/bin:$PATH"
+harnessd serve
+```
+
+This CLI PATH is separate from the shim PATH below. The installer does not
+create shims or edit shell profiles. Full installation, update, and uninstall
+instructions are in [Install.md](Install.md).
+
+Then install selected shims:
 
 ```bash
 harnessctl shims install codex opencode grok
@@ -223,6 +236,8 @@ Common fixes:
   `HARNESSRELAY_ADDR`/`HARNESSRELAY_TOKEN`, or accept the warned direct
   fallback.
 - moved `harnessctl`: run `harnessctl shims reshim`.
+- `harnessctl: command not found`: install HarnessRelay and add
+  `~/.local/bin` to PATH before diagnosing shim PATH.
 
 ## Current Limitations
 

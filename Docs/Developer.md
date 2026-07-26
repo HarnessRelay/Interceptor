@@ -36,10 +36,27 @@ The dashboard source is split into:
 go test ./...
 make test
 make build
+make install
+make update
+make uninstall
 make run
 ```
 
 `make build` builds the dashboard first, then `bin/harnessd` and `bin/harnessctl`.
+The production dashboard is embedded from `web/dist` into `harnessd`, allowing
+the installed daemon to serve it outside the repository.
+Install lifecycle tests run entirely under a temporary HOME:
+
+```bash
+./scripts/install_test.sh
+```
+
+The installer records hashes in
+`${XDG_CONFIG_HOME:-$HOME/.config}/harnessrelay/install-manifest`. Update and
+uninstall must retain the ownership checks: never replace an unmanaged or
+locally modified binary without explicit `--force`, and never remove one.
+Stable auth resolution is shared by daemon and CLI: environment first, then the
+mode-`0600` XDG token file. See `Docs/Install.md`.
 
 Frontend-only verification:
 
@@ -201,7 +218,9 @@ destructive actions.
 
 ## Security Notes
 
-Set `HARNESSRELAY_TOKEN` for a stable local token. If omitted, `harnessd` generates a process-local token at startup.
+`make install` creates a stable local token. `HARNESSRELAY_TOKEN` overrides the
+installed token. Outside an installed setup, `harnessd` generates a
+process-local token at startup.
 
 State-changing browser requests use cookie auth plus `X-CSRF-Token`. CLI and tests should use bearer auth.
 

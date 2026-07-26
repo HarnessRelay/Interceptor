@@ -872,6 +872,39 @@ through reversible user-local shims.
 - [x] Safely validate fake shim execution and installed Codex/OpenCode/Grok
   resolution without changing the real user shell profile.
 
+# Phase 18 — User-local Installation and Dogfooding
+
+Goal: make HarnessRelay itself safely installable, updatable, uninstallable,
+and usable from PATH before real shim dogfooding.
+
+## 18.1 Install lifecycle
+
+- [x] Add rootless XDG-aware `make install`, `make update`, and
+  `make uninstall`.
+- [x] Install `harnessctl` and `harnessd` atomically under `~/.local/bin`.
+- [x] Track binary ownership with a mode-`0600` hash manifest.
+- [x] Refuse unmanaged overwrite and modified/unmanaged deletion.
+- [x] Preserve config/data by default and require explicit `--purge`.
+- [x] Keep shell profile editing and shim installation opt-in.
+
+## 18.2 Stable auth and diagnostics
+
+- [x] Generate and preserve a mode-`0600` stable token.
+- [x] Share config-token loading between daemon and CLI with environment
+  override.
+- [x] Expand `harnessctl status` with daemon, token, binary, config, and shim
+  path diagnostics.
+
+## 18.3 Tests and documentation
+
+- [x] Add temporary-HOME install/update/uninstall/purge safety tests.
+- [x] Add `Docs/Install.md` and `Docs/QA/Install-QA.md`.
+- [x] Update README, shims, developer, and Todo documentation.
+- [x] Complete full Go, Make, frontend, Playwright, temporary-HOME install,
+  fake-shim dogfooding, and installed Codex-resolution gates.
+- [ ] Consider a rootless systemd user service after its command/API contract
+  is added to the normative nomenclature.
+
 Use this template when adding new tasks.
 
 ```md

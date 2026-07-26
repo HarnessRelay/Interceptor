@@ -34,6 +34,7 @@ type TerminalConfig struct {
 
 type SecurityConfig struct {
 	AuthToken           string
+	AuthTokenSource     string
 	AllowRootForTesting bool
 	AllowNonLocalBind   bool
 }
@@ -53,6 +54,9 @@ func Default() Config {
 
 func Load() (Config, error) {
 	cfg := Default()
+	if err := loadFile(&cfg); err != nil {
+		return Config{}, err
+	}
 	if bindAddress := os.Getenv("HARNESSRELAY_BIND_ADDRESS"); bindAddress != "" {
 		cfg.BindAddress = bindAddress
 	}
@@ -63,13 +67,111 @@ func Load() (Config, error) {
 		}
 		cfg.Port = parsed
 	}
-	cfg.Security.AuthToken = os.Getenv("HARNESSRELAY_TOKEN")
+	authToken, authTokenSource, err := ResolveAuthToken()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Security.AuthToken = authToken
+	cfg.Security.AuthTokenSource = authTokenSource
 	cfg.Security.AllowRootForTesting = os.Getenv("HARNESSRELAY_ALLOW_ROOT_FOR_TESTING") == "1"
 	cfg.Security.AllowNonLocalBind = os.Getenv("HARNESSRELAY_ALLOW_NONLOCAL_BIND") == "1"
 	if !isLocalBind(cfg.BindAddress) && !cfg.Security.AllowNonLocalBind {
 		return Config{}, errors.New("non-local bind requires HARNESSRELAY_ALLOW_NONLOCAL_BIND=1")
 	}
 	return cfg, nil
+}
+
+func loadFile(cfg *Config) error {
+	for _, path := range SearchPaths() {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read config %s: %w", path, err)
+		}
+		lines := strings.Split(string(data), "\n")
+		for index, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
+				continue
+			}
+			key, raw, found := strings.Cut(line, "=")
+			if !found {
+				return fmt.Errorf("parse config %s:%d: expected key = value", path, index+1)
+			}
+			key = strings.TrimSpace(key)
+			raw = strings.TrimSpace(raw)
+			switch key {
+			case "bind_address":
+				value, err := strconv.Unquote(raw)
+				if err != nil || value == "" {
+					return fmt.Errorf("parse config %s:%d: invalid bind_address", path, index+1)
+				}
+				cfg.BindAddress = value
+			case "port":
+				value, err := strconv.Atoi(raw)
+				if err != nil || value <= 0 || value > 65535 {
+					return fmt.Errorf("parse config %s:%d: invalid port", path, index+1)
+				}
+				cfg.Port = value
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// ResolveAuthToken applies the local authentication precedence used by both
+// harnessd and harnessctl. An explicit environment value always wins; the
+// user-local token file is the stable fallback.
+func ResolveAuthToken() (token, source string, err error) {
+	if token := os.Getenv("HARNESSRELAY_TOKEN"); token != "" {
+		return token, "env", nil
+	}
+	path, err := TokenPath()
+	if err != nil {
+		return "", "missing", err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", "missing", nil
+	}
+	if err != nil {
+		return "", "missing", fmt.Errorf("read auth token %s: %w", path, err)
+	}
+	token = strings.TrimSpace(string(data))
+	if token == "" {
+		return "", "missing", fmt.Errorf("auth token file %s is empty", path)
+	}
+	return token, "config", nil
+}
+
+func ConfigDir() (string, error) {
+	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
+		return filepath.Join(xdgConfig, "harnessrelay"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "harnessrelay"), nil
+}
+
+func TokenPath() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "token"), nil
+}
+
+func ConfigPath() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "interceptor.toml"), nil
 }
 
 func (c Config) Address() string {
@@ -80,8 +182,7 @@ func SearchPaths() []string {
 	var paths []string
 	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
 		paths = append(paths, filepath.Join(xdgConfig, "harnessrelay", "interceptor.toml"))
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
+	} else if home, err := os.UserHomeDir(); err == nil && home != "" {
 		paths = append(paths, filepath.Join(home, ".config", "harnessrelay", "interceptor.toml"))
 	}
 	paths = append(paths, "harnessrelay.interceptor.toml")

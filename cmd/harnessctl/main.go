@@ -22,15 +22,17 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/harnessrelay/interceptor/internal/config"
 	"github.com/harnessrelay/interceptor/internal/shims"
 )
 
 const version = "dev"
 
 type client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL     string
+	token       string
+	tokenSource string
+	http        *http.Client
 }
 
 type sessionDTO struct {
@@ -130,7 +132,7 @@ Usage:
 
 Environment:
   HARNESSRELAY_ADDR   default http://127.0.0.1:8765
-  HARNESSRELAY_TOKEN  required for authenticated API calls
+  HARNESSRELAY_TOKEN  overrides the installed user-local token
   HARNESSRELAY_BYPASS set to 1 to execute a shim's real binary directly
 `)
 }
@@ -519,25 +521,83 @@ func newClient() client {
 	baseURL := os.Getenv("HARNESSRELAY_ADDR")
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:8765"
+		if cfg, err := config.Load(); err == nil {
+			baseURL = "http://" + cfg.Address()
+		}
 	}
+	token, source, _ := config.ResolveAuthToken()
 	return client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   os.Getenv("HARNESSRELAY_TOKEN"),
-		http:    &http.Client{Timeout: 10 * time.Second},
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		token:       token,
+		tokenSource: source,
+		http:        &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 func (c client) status(stdout io.Writer) error {
+	executable, executableErr := os.Executable()
+	if executableErr != nil {
+		executable = "unknown"
+	} else if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	pathExecutable, pathErr := exec.LookPath("harnessctl")
+	pathStatus := "ready"
+	if pathErr != nil {
+		pathExecutable = "not found"
+		pathStatus = "harnessctl is not available from PATH"
+	} else if pathResolved, err := filepath.EvalSymlinks(pathExecutable); err == nil && pathResolved != executable {
+		pathStatus = "PATH resolves to a different harnessctl"
+	}
+	installTarget := filepath.Join(userHomeOrDot(), ".local", "bin", "harnessctl")
+	if override := os.Getenv("HARNESSRELAY_BIN_DIR"); override != "" {
+		installTarget = filepath.Join(override, "harnessctl")
+	}
+	configPath, configErr := config.ConfigPath()
+	if configErr != nil {
+		configPath = "unavailable: " + configErr.Error()
+	}
+	tokenPath, tokenPathErr := config.TokenPath()
+	if tokenPathErr != nil {
+		tokenPath = "unavailable: " + tokenPathErr.Error()
+	}
+	shimPath, shimErr := shims.DefaultShimDir()
+	if shimErr != nil {
+		shimPath = "unavailable: " + shimErr.Error()
+	}
+
+	fmt.Fprintln(stdout, "HarnessRelay status")
+	fmt.Fprintf(stdout, "  version: %s\n", version)
+	fmt.Fprintf(stdout, "  configured address: %s\n", c.baseURL)
 	var health struct {
 		Status  string `json:"status"`
 		Service string `json:"service"`
 		Version string `json:"version"`
 	}
 	if err := c.request(http.MethodGet, "/api/v1/health", nil, &health); err != nil {
-		return err
+		fmt.Fprintf(stdout, "  daemon: unreachable (%v)\n", err)
+	} else {
+		fmt.Fprintf(stdout, "  daemon: reachable\n")
+		fmt.Fprintf(stdout, "  %s %s (%s)\n", health.Service, health.Status, health.Version)
 	}
-	fmt.Fprintf(stdout, "%s %s (%s)\n", health.Service, health.Status, health.Version)
+	fmt.Fprintln(stdout, "Auth:")
+	fmt.Fprintf(stdout, "  token source: %s\n", c.tokenSource)
+	fmt.Fprintf(stdout, "  token file: %s\n", tokenPath)
+	fmt.Fprintln(stdout, "Install:")
+	fmt.Fprintf(stdout, "  active binary: %s\n", executable)
+	fmt.Fprintf(stdout, "  PATH binary: %s\n", pathExecutable)
+	fmt.Fprintf(stdout, "  PATH status: %s\n", pathStatus)
+	fmt.Fprintf(stdout, "  default install target: %s\n", installTarget)
+	fmt.Fprintf(stdout, "  config: %s\n", configPath)
+	fmt.Fprintf(stdout, "  shim path: %s\n", shimPath)
 	return nil
+}
+
+func userHomeOrDot() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return "."
 }
 
 func (c client) sessions(stdout io.Writer) error {
