@@ -31,13 +31,14 @@ const (
 
 // CreateOptions describes how to create a new session.
 type CreateOptions struct {
-	Name    string
-	Command string
-	Args    []string
-	WorkDir string
-	Env     []string
-	Rows    uint16
-	Cols    uint16
+	Name        string
+	HarnessType string
+	Command     string
+	Args        []string
+	WorkDir     string
+	Env         []string
+	Rows        uint16
+	Cols        uint16
 }
 
 // TerminalSize describes a session terminal's character dimensions.
@@ -48,35 +49,37 @@ type TerminalSize struct {
 
 // Info is a point-in-time, race-safe session metadata snapshot.
 type Info struct {
-	ID        string
-	Name      string
-	Command   string
-	Args      []string
-	WorkDir   string
-	Status    Status
-	PID       int
-	PGID      int
-	Terminal  TerminalSize
-	StartedAt time.Time
-	ExitedAt  *time.Time
-	ExitCode  *int
+	ID          string
+	Name        string
+	HarnessType string
+	Command     string
+	Args        []string
+	WorkDir     string
+	Status      Status
+	PID         int
+	PGID        int
+	Terminal    TerminalSize
+	StartedAt   time.Time
+	ExitedAt    *time.Time
+	ExitCode    *int
 }
 
 // Session holds metadata and runtime state for one session.
 type Session struct {
-	ID        string
-	Name      string
-	Command   string
-	Args      []string
-	WorkDir   string
-	Status    Status
-	PID       int
-	PGID      int
-	Rows      uint16
-	Cols      uint16
-	StartedAt time.Time
-	ExitedAt  *time.Time
-	ExitCode  *int
+	ID          string
+	Name        string
+	HarnessType string
+	Command     string
+	Args        []string
+	WorkDir     string
+	Status      Status
+	PID         int
+	PGID        int
+	Rows        uint16
+	Cols        uint16
+	StartedAt   time.Time
+	ExitedAt    *time.Time
+	ExitCode    *int
 
 	runtime                  *pty.Runtime
 	buf                      *outputBuffer
@@ -126,18 +129,19 @@ func (s *Session) Info() Info {
 		exitCode = &code
 	}
 	return Info{
-		ID:        s.ID,
-		Name:      s.Name,
-		Command:   s.Command,
-		Args:      args,
-		WorkDir:   s.WorkDir,
-		Status:    s.Status,
-		PID:       s.PID,
-		PGID:      s.PGID,
-		Terminal:  TerminalSize{Rows: s.Rows, Cols: s.Cols},
-		StartedAt: s.StartedAt,
-		ExitedAt:  exitedAt,
-		ExitCode:  exitCode,
+		ID:          s.ID,
+		Name:        s.Name,
+		HarnessType: s.HarnessType,
+		Command:     s.Command,
+		Args:        args,
+		WorkDir:     s.WorkDir,
+		Status:      s.Status,
+		PID:         s.PID,
+		PGID:        s.PGID,
+		Terminal:    TerminalSize{Rows: s.Rows, Cols: s.Cols},
+		StartedAt:   s.StartedAt,
+		ExitedAt:    exitedAt,
+		ExitCode:    exitCode,
 	}
 }
 
@@ -196,21 +200,27 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		return nil, err
 	}
 
+	harnessType := opts.HarnessType
+	if harnessType == "" {
+		harnessType = "generic"
+	}
+
 	sess := &Session{
-		ID:        id,
-		Name:      opts.Name,
-		Command:   opts.Command,
-		Args:      opts.Args,
-		WorkDir:   opts.WorkDir,
-		Status:    StatusStarting,
-		PID:       r.PID(),
-		PGID:      r.PGID(),
-		Rows:      rows,
-		Cols:      cols,
-		StartedAt: time.Now(),
-		runtime:   r,
-		buf:       newOutputBuffer(defaultOutputBufferSize),
-		done:      make(chan struct{}),
+		ID:          id,
+		Name:        opts.Name,
+		HarnessType: harnessType,
+		Command:     opts.Command,
+		Args:        opts.Args,
+		WorkDir:     opts.WorkDir,
+		Status:      StatusStarting,
+		PID:         r.PID(),
+		PGID:        r.PGID(),
+		Rows:        rows,
+		Cols:        cols,
+		StartedAt:   time.Now(),
+		runtime:     r,
+		buf:         newOutputBuffer(defaultOutputBufferSize),
+		done:        make(chan struct{}),
 	}
 
 	if m.bus != nil {

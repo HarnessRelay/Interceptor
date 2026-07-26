@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
 	"github.com/harnessrelay/interceptor/internal/storage"
@@ -30,9 +31,10 @@ const testAuthToken = "test-local-token"
 
 func TestHealthEndpoint(t *testing.T) {
 	router := NewRouter(Options{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Version:  "test-version",
-		StaticFS: testStaticFS(),
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:   "test-version",
+		StaticFS:  testStaticFS(),
+		Harnesses: []harness.Detected{},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -53,9 +55,10 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestStaticRootAndAPINotFoundAreSeparated(t *testing.T) {
 	router := NewRouter(Options{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Version:  "test-version",
-		StaticFS: testStaticFS(),
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:   "test-version",
+		StaticFS:  testStaticFS(),
+		Harnesses: []harness.Detected{},
 	})
 
 	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -157,6 +160,46 @@ func TestSessionRESTCreateListGetSnapshotAndEvents(t *testing.T) {
 	decodeBody(t, eventsRec, &eventList)
 	if len(eventList.Events) == 0 {
 		t.Fatal("events endpoint returned no events")
+	}
+}
+
+func TestHarnessesEndpointListsDetectedHarnesses(t *testing.T) {
+	router := NewRouter(Options{
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:  "test-version",
+		StaticFS: testStaticFS(),
+		Auth:     security.NewAuthenticator(testAuthToken),
+		Harnesses: []harness.Detected{
+			{
+				Definition: harness.Definition{
+					ID:          "codex",
+					Name:        "Codex",
+					Command:     "codex",
+					DefaultMode: "chat",
+					Description: "OpenAI Codex CLI",
+				},
+				Installed: true,
+				Path:      "/tmp/bin/codex",
+				Version:   "codex-cli test",
+			},
+		},
+	})
+
+	rec := serveJSON(t, router, http.MethodGet, "/api/v1/harnesses", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("harnesses status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp harnessesResponse
+	decodeBody(t, rec, &resp)
+	if len(resp.Harnesses) != 1 {
+		t.Fatalf("harness count = %d, want 1", len(resp.Harnesses))
+	}
+	got := resp.Harnesses[0]
+	if got.ID != "codex" || got.Command != "codex" || got.DefaultMode != "chat" || !got.Installed {
+		t.Fatalf("unexpected harness response: %+v", got)
+	}
+	if got.Path != "/tmp/bin/codex" || got.Version != "codex-cli test" {
+		t.Fatalf("missing path/version metadata: %+v", got)
 	}
 }
 
@@ -519,13 +562,14 @@ func TestSessionControlWritesAuditMetadataWithoutInputPayload(t *testing.T) {
 	mgr := session.NewManagerWithBus(bus)
 	audit := storage.NewAuditLog(10)
 	router := NewRouter(Options{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Version:  "test-version",
-		StaticFS: testStaticFS(),
-		Sessions: mgr,
-		Events:   bus,
-		Auth:     security.NewAuthenticator(testAuthToken),
-		Audit:    audit,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:   "test-version",
+		StaticFS:  testStaticFS(),
+		Sessions:  mgr,
+		Events:    bus,
+		Auth:      security.NewAuthenticator(testAuthToken),
+		Audit:     audit,
+		Harnesses: []harness.Detected{},
 	})
 
 	sess := createSession(t, router, map[string]any{
@@ -694,12 +738,13 @@ func newTestRouter() (http.Handler, *session.Manager, *events.Bus) {
 	bus := events.NewBus()
 	mgr := session.NewManagerWithBus(bus)
 	router := NewRouter(Options{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Version:  "test-version",
-		StaticFS: testStaticFS(),
-		Sessions: mgr,
-		Events:   bus,
-		Auth:     security.NewAuthenticator(testAuthToken),
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:   "test-version",
+		StaticFS:  testStaticFS(),
+		Sessions:  mgr,
+		Events:    bus,
+		Auth:      security.NewAuthenticator(testAuthToken),
+		Harnesses: []harness.Detected{},
 	})
 	return router, mgr, bus
 }

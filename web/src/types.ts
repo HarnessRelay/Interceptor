@@ -54,10 +54,23 @@ export type Snapshot = {
 
 export type CreateForm = {
   name: string;
+  harness_type?: string;
   command: string;
   args: string;
   cwd: string;
   mode: ViewMode;
+};
+
+export type HarnessPreset = {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  installed: boolean;
+  path?: string;
+  version?: string;
+  default_mode: ViewMode;
+  description: string;
 };
 
 export type AuthStatus = {

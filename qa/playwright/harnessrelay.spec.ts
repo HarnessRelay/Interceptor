@@ -31,9 +31,9 @@ test("Screen 1: Login/Auth", async ({ page, request }) => {
 
   await password.fill("dashboard-token");
   await password.press("Enter");
-  await expect(page.locator(".create-form")).toBeVisible();
+  await expect(page.locator(".session-launcher")).toBeVisible();
   await page.reload();
-  await expect(page.locator(".create-form")).toBeVisible();
+  await expect(page.locator(".session-launcher")).toBeVisible();
   await expect(unexpectedErrors(errors)).toEqual([]);
 });
 
@@ -42,9 +42,9 @@ test("Screen 2: Empty App Shell", async ({ page }) => {
   await login(page);
 
   await expect(page.locator(".brand")).toContainText("HarnessRelay");
-  await expect(page.locator(".create-form")).toBeVisible();
+  await expect(page.locator(".session-launcher")).toBeVisible();
   await expect(page.locator(".session-empty")).toContainText("No sessions yet");
-  await expect(page.locator(".empty-state")).toContainText(/Start in Chat Mode|Checking the local daemon/);
+  await expect(page.locator(".empty-state")).toContainText(/detected harness|Checking the local daemon/);
   await expect(page.getByRole("button", { name: "Refresh sessions" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.screenshot({ path: `${screenshotDir}/empty-app-shell.png`, fullPage: true });
@@ -55,6 +55,7 @@ test("Screen 3: Create Session", async ({ page }) => {
   const errors = await consoleErrors(page);
   await login(page);
 
+  await page.getByRole("button", { name: "Manual" }).click();
   const form = page.locator(".create-form");
   await expect(form.locator("label", { hasText: "Name" }).locator("input")).toBeVisible();
   await expect(form.locator("label", { hasText: "Command" }).locator("input")).toHaveValue("/bin/bash");
@@ -205,7 +206,7 @@ test("QA-002: Chat Mode suppresses live noisy TUI artifacts consistently", async
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
 
   await page.reload();
-  await expect(page.locator(".create-form")).toBeVisible();
+  await expect(page.locator(".session-launcher")).toBeVisible();
   await selectSession(page, sessionName);
   await expect(page.locator(".transcript")).toContainText("This session is using a terminal UI");
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
@@ -299,7 +300,7 @@ test("Screen 8: Reconnect and Reload", async ({ page }) => {
   await waitForSnapshotText(page, sessionName, `before-reload-${unique}`);
 
   await page.reload();
-  await expect(page.locator(".create-form")).toBeVisible();
+  await expect(page.locator(".session-launcher")).toBeVisible();
   await expect(page.getByRole("button", { name: new RegExp(sessionName) })).toBeVisible();
   await selectSession(page, sessionName);
   await expect(page.locator(".transcript")).toContainText(`before-reload-${unique}`);

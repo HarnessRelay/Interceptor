@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/logging"
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
@@ -20,13 +21,14 @@ import (
 )
 
 type Options struct {
-	Logger   *slog.Logger
-	Version  string
-	StaticFS fs.FS
-	Sessions *session.Manager
-	Events   *events.Bus
-	Auth     *security.Authenticator
-	Audit    *storage.AuditLog
+	Logger    *slog.Logger
+	Version   string
+	StaticFS  fs.FS
+	Sessions  *session.Manager
+	Events    *events.Bus
+	Auth      *security.Authenticator
+	Audit     *storage.AuditLog
+	Harnesses []harness.Detected
 }
 
 type healthResponse struct {
@@ -54,6 +56,10 @@ type sessionResponse struct {
 
 type sessionsResponse struct {
 	Sessions []sessionDTO `json:"sessions"`
+}
+
+type harnessesResponse struct {
+	Harnesses []harnessDTO `json:"harnesses"`
 }
 
 type createSessionRequest struct {
@@ -126,6 +132,18 @@ type sessionDTO struct {
 	ExitCode    *int        `json:"exit_code,omitempty"`
 }
 
+type harnessDTO struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args"`
+	Installed   bool     `json:"installed"`
+	Path        string   `json:"path,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	DefaultMode string   `json:"default_mode"`
+	Description string   `json:"description"`
+}
+
 type terminalDTO struct {
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`
@@ -175,6 +193,9 @@ func NewRouter(opts Options) http.Handler {
 	if opts.Audit == nil {
 		opts.Audit = storage.NewAuditLog(0)
 	}
+	if opts.Harnesses == nil {
+		opts.Harnesses = harness.DiscoverInstalled(context.Background())
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +207,7 @@ func NewRouter(opts Options) http.Handler {
 	})
 	mux.HandleFunc("GET /api/v1/auth/status", opts.handleAuthStatus)
 	mux.HandleFunc("POST /api/v1/auth/login", opts.handleAuthLogin)
+	mux.HandleFunc("GET /api/v1/harnesses", opts.requireAuth(opts.handleListHarnesses))
 	mux.HandleFunc("GET /api/v1/sessions", opts.requireAuth(opts.handleListSessions))
 	mux.HandleFunc("POST /api/v1/sessions", opts.requireAuth(opts.handleCreateSession))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", opts.requireAuth(opts.handleGetSession))
@@ -262,6 +284,14 @@ func (opts Options) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionsResponse{Sessions: out})
 }
 
+func (opts Options) handleListHarnesses(w http.ResponseWriter, r *http.Request) {
+	out := make([]harnessDTO, 0, len(opts.Harnesses))
+	for _, detected := range opts.Harnesses {
+		out = append(out, harnessToDTO(detected))
+	}
+	writeJSON(w, http.StatusOK, harnessesResponse{Harnesses: out})
+}
+
 func isUnsafeMethod(method string) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
@@ -290,13 +320,14 @@ func (opts Options) handleCreateSession(w http.ResponseWriter, r *http.Request) 
 		workDir = req.WorkDir
 	}
 	sess, err := opts.Sessions.Create(r.Context(), session.CreateOptions{
-		Name:    req.Name,
-		Command: req.Command,
-		Args:    req.Args,
-		WorkDir: workDir,
-		Env:     envMapToList(req.Env),
-		Rows:    req.Terminal.Rows,
-		Cols:    req.Terminal.Cols,
+		Name:        req.Name,
+		HarnessType: req.HarnessType,
+		Command:     req.Command,
+		Args:        req.Args,
+		WorkDir:     workDir,
+		Env:         envMapToList(req.Env),
+		Rows:        req.Terminal.Rows,
+		Cols:        req.Terminal.Cols,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -642,7 +673,7 @@ func sessionToDTO(info session.Info) sessionDTO {
 	return sessionDTO{
 		ID:          info.ID,
 		Name:        info.Name,
-		HarnessType: "generic",
+		HarnessType: info.HarnessType,
 		AdapterID:   "generic",
 		Command:     info.Command,
 		Args:        info.Args,
@@ -658,6 +689,22 @@ func sessionToDTO(info session.Info) sessionDTO {
 		UpdatedAt: updatedAt,
 		ExitedAt:  info.ExitedAt,
 		ExitCode:  info.ExitCode,
+	}
+}
+
+func harnessToDTO(detected harness.Detected) harnessDTO {
+	args := make([]string, len(detected.Args))
+	copy(args, detected.Args)
+	return harnessDTO{
+		ID:          detected.ID,
+		Name:        detected.Name,
+		Command:     detected.Command,
+		Args:        args,
+		Installed:   detected.Installed,
+		Path:        detected.Path,
+		Version:     detected.Version,
+		DefaultMode: detected.DefaultMode,
+		Description: detected.Description,
 	}
 }
 

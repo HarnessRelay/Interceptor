@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api/client";
-import type { CreateForm, Session, ViewMode } from "../types";
+import type { CreateForm, HarnessPreset, Session, ViewMode } from "../types";
 import { commandLine } from "../utils";
 import { LogoMark } from "./LoginScreen";
 import { ModeToggle } from "./ModeToggle";
@@ -8,6 +8,7 @@ import { StatusBadge } from "./StatusBadge";
 
 export function Sidebar({
   sessions,
+  harnesses,
   activeID,
   loading,
   onRefresh,
@@ -17,6 +18,7 @@ export function Sidebar({
   modeBySession
 }: {
   sessions: Session[];
+  harnesses: HarnessPreset[];
   activeID: string | null;
   loading: boolean;
   onRefresh: () => void;
@@ -39,9 +41,86 @@ export function Sidebar({
           ↻
         </button>
       </header>
-      <CreateSessionForm onCreated={onCreated} onError={onError} />
+      <SessionLauncher harnesses={harnesses} onCreated={onCreated} onError={onError} />
       <SessionList sessions={sessions} activeID={activeID} loading={loading} onSelect={onSelect} modeBySession={modeBySession} />
     </aside>
+  );
+}
+
+function SessionLauncher({
+  harnesses,
+  onCreated,
+  onError
+}: {
+  harnesses: HarnessPreset[];
+  onCreated: (session: Session, mode: ViewMode) => void;
+  onError: (message: string) => void;
+}) {
+  const [manualOpen, setManualOpen] = useState(false);
+  const [creatingID, setCreatingID] = useState<string | null>(null);
+
+  async function launch(harness: HarnessPreset) {
+    setCreatingID(harness.id);
+    try {
+      onCreated(await api.createSession({
+        name: harness.name,
+        harness_type: harness.id,
+        command: harness.command,
+        args: harness.args.join(" "),
+        cwd: "",
+        mode: harness.default_mode
+      }), harness.default_mode);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setCreatingID(null);
+    }
+  }
+
+  return (
+    <div className="session-launcher">
+      <div className="launcher-header">
+        <div>
+          <div className="form-section-title">Start a session</div>
+          <p>{harnesses.length > 0 ? "Detected at daemon startup" : "No known harnesses detected"}</p>
+        </div>
+        <button className="secondary-button" type="button" onClick={() => setManualOpen(true)}>
+          Manual
+        </button>
+      </div>
+      {harnesses.length > 0 && (
+        <div className="preset-list">
+          {harnesses.map((harness) => (
+            <button key={harness.id} className="preset-button" type="button" onClick={() => launch(harness)} disabled={creatingID !== null}>
+              <span className="preset-name">{creatingID === harness.id ? "Starting" : harness.name}</span>
+              <span className="preset-meta">{[harness.command, harness.version].filter(Boolean).join(" / ")}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {manualOpen && (
+        <div className="manual-palette" role="dialog" aria-modal="true" aria-label="Create manual session">
+          <div className="manual-panel">
+            <div className="manual-panel-header">
+              <div>
+                <div className="form-section-title">Manual session</div>
+                <p>Custom command and working directory</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setManualOpen(false)} aria-label="Close manual session">
+                x
+              </button>
+            </div>
+            <CreateSessionForm
+              onCreated={(session, mode) => {
+                setManualOpen(false);
+                onCreated(session, mode);
+              }}
+              onError={onError}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

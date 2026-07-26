@@ -1,4 +1,4 @@
-import type { AuthStatus, CreateForm, SemanticAction, Session, Snapshot } from "../types";
+import type { AuthStatus, CreateForm, HarnessPreset, SemanticAction, Session, Snapshot } from "../types";
 import { encodeBase64, isUnsafeMethod, splitArgs } from "../utils";
 
 let csrfToken = "";
@@ -23,11 +23,16 @@ export const api = {
     const data = await request<{ sessions: Session[] }>("/api/v1/sessions");
     return data.sessions;
   },
+  async listHarnesses(): Promise<HarnessPreset[]> {
+    const data = await request<{ harnesses: HarnessPreset[] }>("/api/v1/harnesses");
+    return data.harnesses;
+  },
   async createSession(input: CreateForm): Promise<Session> {
     const data = await request<{ session: Session }>("/api/v1/sessions", {
       method: "POST",
       body: JSON.stringify({
         name: input.name || undefined,
+        harness_type: input.harness_type || undefined,
         command: input.command,
         args: splitArgs(input.args),
         cwd: input.cwd || undefined,

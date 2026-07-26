@@ -15,6 +15,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/api"
 	"github.com/harnessrelay/interceptor/internal/config"
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/logging"
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
@@ -65,6 +66,7 @@ func serve() error {
 	logger := logging.New(os.Stdout, slog.LevelInfo)
 	bus := events.NewBus()
 	sessions := session.NewManagerWithBus(bus)
+	harnesses := harness.DiscoverInstalled(context.Background())
 	authToken := cfg.Security.AuthToken
 	if authToken == "" {
 		authToken = security.GenerateToken()
@@ -81,12 +83,13 @@ func serve() error {
 	}
 
 	router := api.NewRouter(api.Options{
-		Logger:   logger,
-		Version:  version,
-		StaticFS: dashboardFS(),
-		Sessions: sessions,
-		Events:   bus,
-		Auth:     auth,
+		Logger:    logger,
+		Version:   version,
+		StaticFS:  dashboardFS(),
+		Sessions:  sessions,
+		Events:    bus,
+		Auth:      auth,
+		Harnesses: harnesses,
 	})
 
 	server := &http.Server{
@@ -106,6 +109,7 @@ func serve() error {
 			slog.String("version", version),
 			slog.String("config_format", config.Format),
 			slog.Int64("terminal_history_limit_bytes", cfg.Terminal.HistoryLimitBytes),
+			slog.Int("detected_harnesses", len(harnesses)),
 		)
 		errCh <- server.ListenAndServe()
 	}()

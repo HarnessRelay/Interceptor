@@ -10,11 +10,15 @@ export async function login(page: Page) {
     await password.fill(token);
     await page.locator(".login-panel").evaluate((form) => (form as HTMLFormElement).requestSubmit());
   }
-  await expect(page.locator(".create-form")).toBeVisible();
+  await expect(page.locator(".session-launcher")).toBeVisible();
 }
 
 export async function createSession(page: Page, options: { name: string; command: string; args?: string; cwd?: string; mode?: "chat" | "terminal" }) {
   const form = page.locator(".create-form");
+  if (!(await form.isVisible())) {
+    await page.getByRole("button", { name: "Manual" }).click();
+  }
+  await expect(form).toBeVisible();
   await form.locator("label", { hasText: "Name" }).locator("input").fill(options.name);
   await form.locator("label", { hasText: "Command" }).locator("input").fill(options.command);
   await form.locator("label", { hasText: "Args" }).locator("input").fill(options.args || "");

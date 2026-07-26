@@ -227,6 +227,89 @@ button:focus-visible {
   padding: 12px;
 }
 
+.session-launcher {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  padding: 12px;
+}
+
+.launcher-header,
+.manual-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launcher-header p,
+.manual-panel-header p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.preset-list {
+  display: grid;
+  gap: 8px;
+}
+
+.preset-button {
+  display: grid;
+  min-height: 54px;
+  justify-items: start;
+  gap: 3px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.preset-name {
+  font-weight: 700;
+}
+
+.preset-meta {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secondary-button {
+  min-width: 74px;
+}
+
+.manual-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: start center;
+  background: rgb(3 7 12 / 0.68);
+  padding: max(7vh, 24px) 18px 18px;
+}
+
+.manual-panel {
+  display: grid;
+  gap: 12px;
+  width: min(420px, 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 14px;
+  box-shadow: var(--shadow-subtle);
+}
+
+.manual-panel .create-form {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
 .primary-button {
   border-color: #0fb895;
   background: #0fb895;

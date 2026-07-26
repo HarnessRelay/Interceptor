@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, setCSRFToken } from "../api/client";
-import type { EventEnvelope, Session, ViewMode } from "../types";
+import type { EventEnvelope, HarnessPreset, Session, ViewMode } from "../types";
 import { EmptyState } from "./EmptyState";
 import { EventInspector } from "./EventInspector";
 import { LoginScreen } from "./LoginScreen";
@@ -20,6 +20,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [harnesses, setHarnesses] = useState<HarnessPreset[]>([]);
   const [modeBySession, setModeBySession] = useState<Record<string, ViewMode>>({});
   const [chatMessagesBySession, setChatMessagesBySession] = useState<Record<string, ChatMessage[]>>(readStoredChatMessages);
 
@@ -46,13 +47,17 @@ export function App() {
     });
   }, []);
 
+  const refreshHarnesses = useCallback(async () => {
+    setHarnesses(await api.listHarnesses());
+  }, []);
+
   useEffect(() => {
     api.authStatus()
       .then((status) => {
         setAuthenticated(status.authenticated);
         setCSRFToken(status.csrf_token || "");
         if (status.authenticated) {
-          return refreshSessions();
+          return Promise.all([refreshSessions(), refreshHarnesses()]);
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -67,7 +72,7 @@ export function App() {
     const status = await api.login(token);
     setCSRFToken(status.csrf_token || "");
     setAuthenticated(status.authenticated);
-    await refreshSessions();
+    await Promise.all([refreshSessions(), refreshHarnesses()]);
   };
 
   const setSessionMode = useCallback((sessionID: string, mode: ViewMode) => {
@@ -111,6 +116,7 @@ export function App() {
     <main className="app-shell">
       <Sidebar
         sessions={sessions}
+        harnesses={harnesses}
         activeID={activeID}
         loading={loading}
         onRefresh={() => refreshSessions().catch((err) => setError(err.message))}
