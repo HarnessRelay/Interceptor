@@ -1,4 +1,4 @@
-import type { AuthStatus, CreateForm, HarnessPreset, SemanticAction, Session, Snapshot } from "../types";
+import type { AuthStatus, CreateForm, EventEnvelope, HarnessPreset, SemanticAction, Session, Snapshot } from "../types";
 import { encodeBase64, isUnsafeMethod, splitArgs } from "../utils";
 
 let csrfToken = "";
@@ -52,8 +52,10 @@ export const api = {
     });
   },
   async sendPrompt(id: string, text: string): Promise<void> {
-    await this.input(id, text);
-    await this.key(id, "Enter");
+    await request(`/api/v1/sessions/${id}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text })
+    });
   },
   async key(id: string, key: string): Promise<void> {
     await request(`/api/v1/sessions/${id}/input`, {
@@ -87,6 +89,12 @@ export const api = {
   },
   async snapshot(id: string): Promise<Snapshot> {
     return request<Snapshot>(`/api/v1/sessions/${id}/snapshot`);
+  },
+  async events(id: string, afterSeq = 0, limit = 1024): Promise<EventEnvelope[]> {
+    const data = await request<{ events: EventEnvelope[] }>(
+      `/api/v1/sessions/${id}/events?after_seq=${afterSeq}&limit=${limit}`
+    );
+    return data.events;
   },
   async submitAction(sessionID: string, eventID: string, action: SemanticAction): Promise<void> {
     await request(`/api/v1/sessions/${sessionID}/actions/${encodeURIComponent(action.id)}`, {

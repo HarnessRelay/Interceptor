@@ -12,11 +12,22 @@ import (
 	"time"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness"
+	"github.com/harnessrelay/interceptor/internal/harness/codex"
 	"github.com/harnessrelay/interceptor/internal/harness/generic"
 	"github.com/harnessrelay/interceptor/internal/pty"
 )
 
 const defaultOutputBufferSize = 4 * 1024 * 1024
+const semanticIdleDelay = 3 * time.Second
+const promptSubmitKeyDelay = 100 * time.Millisecond
+
+var (
+	ErrStaleSemanticAction = errors.New("session: stale or unknown semantic action")
+	ErrUnsupportedAction   = errors.New("session: semantic action is not supported")
+	ErrApprovalPending     = errors.New("session: an approval decision is pending")
+	ErrHarnessNotReady     = errors.New("session: harness is not ready for prompt input")
+)
 
 // Status represents the lifecycle state of a session.
 type Status string
@@ -49,45 +60,62 @@ type TerminalSize struct {
 
 // Info is a point-in-time, race-safe session metadata snapshot.
 type Info struct {
-	ID          string
-	Name        string
-	HarnessType string
-	Command     string
-	Args        []string
-	WorkDir     string
-	Status      Status
-	PID         int
-	PGID        int
-	Terminal    TerminalSize
-	StartedAt   time.Time
-	ExitedAt    *time.Time
-	ExitCode    *int
+	ID           string
+	Name         string
+	HarnessType  string
+	AdapterID    string
+	AdapterName  string
+	Capabilities []harness.Capability
+	Command      string
+	Args         []string
+	WorkDir      string
+	Status       Status
+	PID          int
+	PGID         int
+	Terminal     TerminalSize
+	StartedAt    time.Time
+	ExitedAt     *time.Time
+	ExitCode     *int
 }
 
 // Session holds metadata and runtime state for one session.
 type Session struct {
-	ID          string
-	Name        string
-	HarnessType string
-	Command     string
-	Args        []string
-	WorkDir     string
-	Status      Status
-	PID         int
-	PGID        int
-	Rows        uint16
-	Cols        uint16
-	StartedAt   time.Time
-	ExitedAt    *time.Time
-	ExitCode    *int
+	ID           string
+	Name         string
+	HarnessType  string
+	AdapterID    string
+	AdapterName  string
+	Capabilities []harness.Capability
+	Command      string
+	Args         []string
+	WorkDir      string
+	Status       Status
+	PID          int
+	PGID         int
+	Rows         uint16
+	Cols         uint16
+	StartedAt    time.Time
+	ExitedAt     *time.Time
+	ExitCode     *int
 
 	runtime                  *pty.Runtime
+	adapter                  harness.Adapter
+	parser                   harness.Parser
 	buf                      *outputBuffer
 	done                     chan struct{}
 	mu                       sync.RWMutex
+	inputMu                  sync.Mutex
 	heuristicApprovalEmitted bool
+	semanticStatus           string
+	semanticIdleTimer        *time.Timer
+	pendingAction            *pendingSemanticAction
 
-	publish func(typ events.Type, data any)
+	publish func(typ events.Type, data any) events.Event
+}
+
+type pendingSemanticAction struct {
+	eventID string
+	actions map[string]struct{}
 }
 
 // OutputChunk represents a chunk of PTY output data.
@@ -129,19 +157,22 @@ func (s *Session) Info() Info {
 		exitCode = &code
 	}
 	return Info{
-		ID:          s.ID,
-		Name:        s.Name,
-		HarnessType: s.HarnessType,
-		Command:     s.Command,
-		Args:        args,
-		WorkDir:     s.WorkDir,
-		Status:      s.Status,
-		PID:         s.PID,
-		PGID:        s.PGID,
-		Terminal:    TerminalSize{Rows: s.Rows, Cols: s.Cols},
-		StartedAt:   s.StartedAt,
-		ExitedAt:    exitedAt,
-		ExitCode:    exitCode,
+		ID:           s.ID,
+		Name:         s.Name,
+		HarnessType:  s.HarnessType,
+		AdapterID:    s.AdapterID,
+		AdapterName:  s.AdapterName,
+		Capabilities: append([]harness.Capability(nil), s.Capabilities...),
+		Command:      s.Command,
+		Args:         args,
+		WorkDir:      s.WorkDir,
+		Status:       s.Status,
+		PID:          s.PID,
+		PGID:         s.PGID,
+		Terminal:     TerminalSize{Rows: s.Rows, Cols: s.Cols},
+		StartedAt:    s.StartedAt,
+		ExitedAt:     exitedAt,
+		ExitCode:     exitCode,
 	}
 }
 
@@ -150,12 +181,14 @@ type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	bus      *events.Bus
+	registry *harness.Registry
 }
 
 // NewManager creates a new session manager without an event bus.
 func NewManager() *Manager {
 	return &Manager{
 		sessions: make(map[string]*Session),
+		registry: defaultRegistry(),
 	}
 }
 
@@ -165,7 +198,24 @@ func NewManagerWithBus(bus *events.Bus) *Manager {
 	return &Manager{
 		sessions: make(map[string]*Session),
 		bus:      bus,
+		registry: defaultRegistry(),
 	}
+}
+
+// NewManagerWithRegistry creates a manager with an explicit adapter registry.
+func NewManagerWithRegistry(bus *events.Bus, registry *harness.Registry) *Manager {
+	if registry == nil {
+		registry = defaultRegistry()
+	}
+	return &Manager{
+		sessions: make(map[string]*Session),
+		bus:      bus,
+		registry: registry,
+	}
+}
+
+func defaultRegistry() *harness.Registry {
+	return generic.NewRegistry(codex.New())
 }
 
 // Create starts a new session with the given options.
@@ -177,6 +227,15 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 		return nil, errors.New("session: command is required")
 	}
 	rows, cols := normalizedTerminalSize(opts.Rows, opts.Cols)
+	adapter, match, ok := m.registry.Select(harness.LaunchSpec{
+		Command: opts.Command,
+		Args:    opts.Args,
+		WorkDir: opts.WorkDir,
+		Env:     opts.Env,
+	})
+	if !ok {
+		return nil, errors.New("session: no harness adapter available")
+	}
 
 	id, err := generateID()
 	if err != nil {
@@ -202,36 +261,68 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 
 	harnessType := opts.HarnessType
 	if harnessType == "" {
-		harnessType = "generic"
+		harnessType = adapter.ID()
+	}
+
+	var parser harness.Parser
+	if provider, ok := adapter.(harness.ParserProvider); ok {
+		parser = provider.NewParser()
 	}
 
 	sess := &Session{
-		ID:          id,
-		Name:        opts.Name,
-		HarnessType: harnessType,
-		Command:     opts.Command,
-		Args:        opts.Args,
-		WorkDir:     opts.WorkDir,
-		Status:      StatusStarting,
-		PID:         r.PID(),
-		PGID:        r.PGID(),
-		Rows:        rows,
-		Cols:        cols,
-		StartedAt:   time.Now(),
-		runtime:     r,
-		buf:         newOutputBuffer(defaultOutputBufferSize),
-		done:        make(chan struct{}),
+		ID:           id,
+		Name:         opts.Name,
+		HarnessType:  harnessType,
+		AdapterID:    adapter.ID(),
+		AdapterName:  adapter.Name(),
+		Capabilities: append([]harness.Capability(nil), adapter.Capabilities()...),
+		Command:      opts.Command,
+		Args:         opts.Args,
+		WorkDir:      opts.WorkDir,
+		Status:       StatusStarting,
+		PID:          r.PID(),
+		PGID:         r.PGID(),
+		Rows:         rows,
+		Cols:         cols,
+		StartedAt:    time.Now(),
+		runtime:      r,
+		adapter:      adapter,
+		parser:       parser,
+		buf:          newOutputBuffer(defaultOutputBufferSize),
+		done:         make(chan struct{}),
 	}
 
 	if m.bus != nil {
-		sess.publish = func(typ events.Type, data any) {
-			m.bus.Publish(context.Background(), events.Event{
+		sess.publish = func(typ events.Type, data any) events.Event {
+			return m.bus.Publish(context.Background(), events.Event{
 				Type:      typ,
 				SessionID: id,
 				Data:      data,
 			})
 		}
-		sess.publish(events.TypeSessionCreated, sess)
+		capabilities := make([]string, len(sess.Capabilities))
+		for index, capability := range sess.Capabilities {
+			capabilities[index] = string(capability)
+		}
+		sess.publish(events.TypeSessionCreated, events.SessionCreated{
+			ID:                  sess.ID,
+			Name:                sess.Name,
+			HarnessType:         sess.HarnessType,
+			AdapterID:           sess.AdapterID,
+			AdapterName:         sess.AdapterName,
+			AdapterCapabilities: capabilities,
+			Command:             sess.Command,
+			Args:                append([]string(nil), sess.Args...),
+			WorkDir:             sess.WorkDir,
+			Status:              string(sess.Status),
+			StartedAt:           sess.StartedAt,
+		})
+		sess.publish(events.TypeHarnessDetected, events.HarnessDetected{
+			AdapterID:   adapter.ID(),
+			HarnessName: adapter.Name(),
+			Confidence:  match.Confidence,
+			Reason:      match.Reason,
+		})
 	}
 
 	m.mu.Lock()
@@ -280,8 +371,142 @@ func (m *Manager) Write(id string, data []byte) error {
 	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
 		return fmt.Errorf("session: session %q is %s", id, st)
 	}
+	s.clearPendingForRawInput()
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	_, err := s.runtime.Write(data)
 	return err
+}
+
+// SubmitPrompt writes one adapter-specific prompt submission sequence.
+func (m *Manager) SubmitPrompt(id, text string) error {
+	m.mu.RLock()
+	s, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session: unknown session %q", id)
+	}
+	st := s.status()
+	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
+		return fmt.Errorf("session: session %q is %s", id, st)
+	}
+
+	s.mu.RLock()
+	pending := s.pendingAction != nil
+	semanticStatus := s.semanticStatus
+	s.mu.RUnlock()
+	if pending {
+		return ErrApprovalPending
+	}
+	if hasCapability(s.Capabilities, harness.CapabilitySemanticChat) && semanticStatus != "idle" {
+		return ErrHarnessNotReady
+	}
+
+	parts := [][]byte{append([]byte(text), '\r')}
+	if sequencer, ok := s.parser.(harness.PromptSequencer); ok {
+		parts = sequencer.PromptSequence(text, s.Snapshot())
+	} else if submitter, ok := s.parser.(harness.PromptSubmitter); ok {
+		parts = [][]byte{submitter.PromptBytes(text, s.Snapshot())}
+	} else if submitter, ok := s.adapter.(harness.PromptSubmitter); ok {
+		parts = [][]byte{submitter.PromptBytes(text, s.Snapshot())}
+	}
+	s.inputMu.Lock()
+	for index, part := range parts {
+		if index > 0 {
+			time.Sleep(promptSubmitKeyDelay)
+		}
+		if _, err := s.runtime.Write(part); err != nil {
+			s.inputMu.Unlock()
+			return err
+		}
+	}
+	s.inputMu.Unlock()
+	s.emitSemanticEvent(events.Event{
+		Type: events.TypeChatUserMessage,
+		Data: events.ChatMessage{
+			Role:       "user",
+			Content:    text,
+			Source:     s.AdapterID,
+			Confidence: 1,
+		},
+	})
+	s.emitSemanticEvent(events.Event{
+		Type: events.TypeHarnessStatus,
+		Data: events.HarnessStatus{
+			Status:     "processing",
+			Detail:     s.AdapterName + " received the prompt.",
+			Confidence: 1,
+		},
+	})
+	return nil
+}
+
+// ExecuteAction runs an action only while its originating semantic event is pending.
+func (m *Manager) ExecuteAction(id, eventID, actionID string) error {
+	m.mu.RLock()
+	s, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session: unknown session %q", id)
+	}
+	st := s.status()
+	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
+		return fmt.Errorf("session: session %q is %s", id, st)
+	}
+
+	s.mu.Lock()
+	pending := s.pendingAction
+	if pending == nil || pending.eventID != eventID {
+		s.mu.Unlock()
+		return ErrStaleSemanticAction
+	}
+	if _, ok := pending.actions[actionID]; !ok {
+		s.mu.Unlock()
+		return ErrStaleSemanticAction
+	}
+	handler, ok := s.adapter.(harness.ActionHandler)
+	if !ok {
+		s.mu.Unlock()
+		return ErrUnsupportedAction
+	}
+	data, ok := handler.ActionBytes(actionID)
+	if !ok {
+		s.mu.Unlock()
+		return ErrUnsupportedAction
+	}
+	s.pendingAction = nil
+	s.semanticStatus = "processing"
+	if s.semanticIdleTimer != nil {
+		s.semanticIdleTimer.Stop()
+	}
+	s.mu.Unlock()
+
+	s.inputMu.Lock()
+	_, writeErr := s.runtime.Write(data)
+	s.inputMu.Unlock()
+	if writeErr != nil {
+		return writeErr
+	}
+	if observer, ok := s.parser.(harness.ActionObserver); ok {
+		observer.ActionResolved(actionID)
+	}
+	s.emitSemanticEvent(events.Event{
+		Type: events.TypeApprovalResolved,
+		Data: events.ApprovalResolved{
+			ApprovalEventID: eventID,
+			ActionID:        actionID,
+			Resolution:      "denied",
+		},
+	})
+	s.emitSemanticEvent(events.Event{
+		Type: events.TypeHarnessStatus,
+		Data: events.HarnessStatus{
+			Status:     "processing",
+			Detail:     "Approval denied; Codex is returning to the conversation.",
+			Confidence: 0.95,
+		},
+	})
+	return nil
 }
 
 // Resize changes the terminal dimensions of a session.
@@ -403,14 +628,155 @@ func (s *Session) readOutput() {
 				data := make([]byte, n)
 				copy(data, buf[:n])
 				s.publish(events.TypeTerminalOutput, events.TerminalOutput{Data: data})
-				s.detectHeuristicEvents()
+				if s.AdapterID == "generic" {
+					s.detectHeuristicEvents()
+				}
 			}
+			s.processAdapterOutput(buf[:n])
 		}
 		if err != nil {
 			s.buf.Close()
 			return
 		}
 	}
+}
+
+func (s *Session) processAdapterOutput(chunk []byte) {
+	if s.parser != nil {
+		s.mu.RLock()
+		rows, cols := s.Rows, s.Cols
+		s.mu.RUnlock()
+		update := harness.TerminalUpdate{
+			Chunk:    append([]byte(nil), chunk...),
+			Snapshot: s.Snapshot(),
+			Command:  s.Command,
+			WorkDir:  s.WorkDir,
+			Rows:     rows,
+			Cols:     cols,
+		}
+		for _, event := range s.parser.Process(update) {
+			s.emitSemanticEvent(event)
+		}
+	}
+	if hasCapability(s.Capabilities, harness.CapabilityStatusDetection) {
+		s.scheduleSemanticIdle()
+	}
+}
+
+func (s *Session) emitSemanticEvent(event events.Event) events.Event {
+	if event.Type == "" {
+		return events.Event{}
+	}
+	if event.Type == events.TypeHarnessStatus {
+		if status, ok := event.Data.(events.HarnessStatus); ok {
+			s.mu.Lock()
+			s.semanticStatus = status.Status
+			if status.Status == "waiting_for_approval" && s.semanticIdleTimer != nil {
+				s.semanticIdleTimer.Stop()
+			}
+			s.mu.Unlock()
+		}
+	}
+	if s.publish == nil {
+		return events.Event{}
+	}
+
+	published := s.publish(event.Type, event.Data)
+	if event.Type == events.TypeApprovalRequired {
+		if approval, ok := event.Data.(events.ApprovalRequired); ok {
+			actions := make(map[string]struct{}, len(approval.Actions))
+			for _, action := range approval.Actions {
+				if action.Kind != "ui" {
+					actions[action.ID] = struct{}{}
+				}
+			}
+			terminalDecision := s.AdapterID == "codex" && approval.OperationKind == "workspace_trust"
+			if len(actions) > 0 || terminalDecision {
+				s.mu.Lock()
+				s.pendingAction = &pendingSemanticAction{eventID: published.ID, actions: actions}
+				if s.semanticIdleTimer != nil {
+					s.semanticIdleTimer.Stop()
+				}
+				s.mu.Unlock()
+			}
+		}
+	}
+	return published
+}
+
+func (s *Session) clearPendingForRawInput() {
+	s.mu.Lock()
+	if s.pendingAction == nil {
+		s.mu.Unlock()
+		return
+	}
+	eventID := s.pendingAction.eventID
+	s.pendingAction = nil
+	s.semanticStatus = "terminal_ui_active"
+	s.mu.Unlock()
+	if observer, ok := s.parser.(harness.ActionObserver); ok {
+		observer.ActionResolved("raw_terminal_input")
+	}
+	if s.publish != nil {
+		s.publish(events.TypeHarnessStatus, events.HarnessStatus{
+			Status:     "terminal_ui_active",
+			Detail:     s.AdapterName + " is handling terminal input.",
+			Confidence: 0.8,
+		})
+		s.publish(events.TypeApprovalResolved, events.ApprovalResolved{
+			ApprovalEventID: eventID,
+			ActionID:        "raw_terminal_input",
+			Resolution:      "handled_in_terminal",
+		})
+	}
+}
+
+func (s *Session) scheduleSemanticIdle() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingAction != nil || s.semanticStatus == "waiting_for_approval" {
+		return
+	}
+	if s.semanticIdleTimer == nil {
+		s.semanticIdleTimer = time.AfterFunc(semanticIdleDelay, s.markSemanticIdle)
+		return
+	}
+	s.semanticIdleTimer.Reset(semanticIdleDelay)
+}
+
+func (s *Session) markSemanticIdle() {
+	s.mu.Lock()
+	if s.pendingAction != nil || s.Status == StatusExited || s.Status == StatusFailed || s.Status == StatusTerminated {
+		s.mu.Unlock()
+		return
+	}
+	alreadyIdle := s.semanticStatus == "idle"
+	s.semanticStatus = "idle"
+	s.mu.Unlock()
+	if provider, ok := s.parser.(harness.IdleEventProvider); ok {
+		for _, event := range provider.OnIdle() {
+			s.emitSemanticEvent(event)
+		}
+	}
+	if alreadyIdle {
+		return
+	}
+	if s.publish != nil {
+		s.publish(events.TypeHarnessStatus, events.HarnessStatus{
+			Status:     "idle",
+			Detail:     s.AdapterName + " is waiting for input.",
+			Confidence: 0.75,
+		})
+	}
+}
+
+func hasCapability(capabilities []harness.Capability, wanted harness.Capability) bool {
+	for _, capability := range capabilities {
+		if capability == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) detectHeuristicEvents() {
@@ -445,6 +811,12 @@ func (s *Session) wait() {
 	err := s.runtime.Wait()
 	_ = s.runtime.Close()
 	s.buf.Close()
+	s.mu.Lock()
+	if s.semanticIdleTimer != nil {
+		s.semanticIdleTimer.Stop()
+	}
+	s.pendingAction = nil
+	s.mu.Unlock()
 
 	now := time.Now()
 

@@ -17,6 +17,16 @@ const (
 	TypeSessionExited        Type = "session.exited"
 	TypeSessionStatusChanged Type = "session.status_changed"
 	TypeApprovalRequired     Type = "approval.required"
+	TypeApprovalResolved     Type = "approval.resolved"
+	TypeHarnessDetected      Type = "harness.detected"
+	TypeHarnessStatus        Type = "harness.status"
+	TypeHarnessMetadata      Type = "harness.metadata"
+	TypeChatUserMessage      Type = "chat.user_message"
+	TypeChatAssistantMessage Type = "chat.assistant_message"
+	TypeChatSystemMessage    Type = "chat.system_message"
+	TypeTerminalNoisyOutput  Type = "terminal.noisy_output"
+	TypeAdapterWarning       Type = "adapter.warning"
+	TypeAdapterError         Type = "adapter.error"
 	TypeActionCompleted      Type = "action.completed"
 	TypeActionFailed         Type = "action.failed"
 	TypeError                Type = "error"
@@ -55,10 +65,102 @@ type SessionExited struct {
 	Reason   string `json:"reason"`
 }
 
+// SessionCreated is an immutable session-created event payload.
+type SessionCreated struct {
+	ID                  string    `json:"id"`
+	Name                string    `json:"name,omitempty"`
+	HarnessType         string    `json:"harness_type"`
+	AdapterID           string    `json:"adapter_id"`
+	AdapterName         string    `json:"adapter_name"`
+	AdapterCapabilities []string  `json:"adapter_capabilities"`
+	Command             string    `json:"command"`
+	Args                []string  `json:"args"`
+	WorkDir             string    `json:"cwd"`
+	Status              string    `json:"status"`
+	StartedAt           time.Time `json:"created_at"`
+}
+
 // ErrorPayload carries error details.
 type ErrorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// HarnessDetected identifies the adapter selected for a session.
+type HarnessDetected struct {
+	AdapterID   string  `json:"adapter_id"`
+	HarnessName string  `json:"harness_name"`
+	Confidence  float64 `json:"confidence"`
+	Reason      string  `json:"reason,omitempty"`
+}
+
+// HarnessStatus is an adapter-derived operational state.
+type HarnessStatus struct {
+	Status     string  `json:"status"`
+	Detail     string  `json:"detail,omitempty"`
+	Confidence float64 `json:"confidence"`
+}
+
+// HarnessMetadata contains optional adapter-derived display metadata.
+type HarnessMetadata struct {
+	Model      string  `json:"model,omitempty"`
+	WorkDir    string  `json:"working_directory,omitempty"`
+	Version    string  `json:"version,omitempty"`
+	Confidence float64 `json:"confidence"`
+}
+
+// ChatMessage is a semantic chat message that is safe to render outside the terminal.
+type ChatMessage struct {
+	MessageID  string  `json:"message_id,omitempty"`
+	Role       string  `json:"role"`
+	Content    string  `json:"content"`
+	Source     string  `json:"source"`
+	Confidence float64 `json:"confidence"`
+}
+
+// TerminalNoiseSuppressed explains why raw output was not projected into Chat Mode.
+type TerminalNoiseSuppressed struct {
+	Reason string `json:"reason"`
+}
+
+// AdapterNotice is a user-readable warning or error from semantic parsing.
+type AdapterNotice struct {
+	Description string `json:"description"`
+	Source      string `json:"source,omitempty"`
+}
+
+// SemanticAction is a backend-defined action rendered by clients.
+type SemanticAction struct {
+	ID              string `json:"id"`
+	Label           string `json:"label"`
+	Kind            string `json:"kind"`
+	Style           string `json:"style,omitempty"`
+	Danger          bool   `json:"danger,omitempty"`
+	RequiresEventID bool   `json:"requires_event_id"`
+	Version         int    `json:"version"`
+}
+
+// ApprovalRequired describes a high-confidence adapter approval prompt.
+type ApprovalRequired struct {
+	OperationKind    string           `json:"operation_kind"`
+	Command          string           `json:"command,omitempty"`
+	WorkingDirectory string           `json:"working_directory,omitempty"`
+	Prompt           string           `json:"prompt"`
+	Actions          []SemanticAction `json:"actions"`
+	Confidence       float64          `json:"confidence"`
+}
+
+// ApprovalResolved records the terminal action used to resolve an approval.
+type ApprovalResolved struct {
+	ApprovalEventID string `json:"approval_event_id"`
+	ActionID        string `json:"action_id"`
+	Resolution      string `json:"resolution"`
+}
+
+// AdapterMessage is a warning or error emitted by an adapter.
+type AdapterMessage struct {
+	Message    string  `json:"message"`
+	Confidence float64 `json:"confidence,omitempty"`
 }
 
 func newEventID() string {

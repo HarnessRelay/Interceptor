@@ -21,6 +21,10 @@ func (Adapter) ID() string {
 	return adapterID
 }
 
+func (Adapter) Name() string {
+	return "Generic"
+}
+
 func (Adapter) Priority() int {
 	return -1000
 }
@@ -36,10 +40,16 @@ func (Adapter) Match(harness.LaunchSpec) harness.MatchResult {
 func (Adapter) Capabilities() []harness.Capability {
 	return []harness.Capability{
 		harness.CapabilityRawTerminal,
+		harness.CapabilityChatProjection,
+		harness.CapabilityPromptSubmit,
 		harness.CapabilityTextInput,
 		harness.CapabilitySpecialKeys,
 		harness.CapabilityResize,
 		harness.CapabilityInterrupt,
 		harness.CapabilityTerminate,
 	}
+}
+
+func (Adapter) PromptBytes(text string, _ []byte) []byte {
+	return append([]byte(text), '\r')
 }

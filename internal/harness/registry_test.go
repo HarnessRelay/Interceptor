@@ -9,8 +9,10 @@ type testAdapter struct {
 	matched    bool
 }
 
-func (a testAdapter) ID() string    { return a.id }
-func (a testAdapter) Priority() int { return a.priority }
+func (a testAdapter) ID() string                 { return a.id }
+func (a testAdapter) Name() string               { return a.id }
+func (a testAdapter) Priority() int              { return a.priority }
+func (a testAdapter) Capabilities() []Capability { return nil }
 func (a testAdapter) Match(LaunchSpec) MatchResult {
 	return MatchResult{Matched: a.matched, Confidence: a.confidence}
 }

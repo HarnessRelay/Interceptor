@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,6 +172,31 @@ func TestManagerWriteInput(t *testing.T) {
 	readUntil(t, sub, "echo:hello", 5*time.Second)
 }
 
+func TestManagerSubmitPromptUsesGenericLineInputFallback(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: "/bin/sh",
+		Args:    []string{fixturePath(t, "interactive-echo.sh")},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sub := sess.Subscribe()
+	readUntil(t, sub, "input>", 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "generic prompt"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	readUntil(t, sub, "echo:generic prompt", 5*time.Second)
+	waitSessionDone(t, sess, 5*time.Second)
+
+	event := waitForHistoryEvent(t, bus, sess.ID, events.TypeChatUserMessage, time.Second)
+	if data := event.Data.(events.ChatMessage); data.Content != "generic prompt" || data.Source != "generic" {
+		t.Fatalf("chat.user_message = %+v", data)
+	}
+}
+
 func TestManagerFakeApprovalHarness(t *testing.T) {
 	mgr := NewManager()
 	sess, err := mgr.Create(context.Background(), CreateOptions{
@@ -249,6 +275,147 @@ func TestManagerFakeFullscreenHarness(t *testing.T) {
 	}
 	if !strings.Contains(out, "fullscreen complete") {
 		t.Fatalf("snapshot missing completion text: %q", out)
+	}
+}
+
+func TestManagerCodexAdapterSemanticFlow(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "fake-codex",
+		Command: fixturePath(t, "codex"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	info := sess.Info()
+	if info.AdapterID != "codex" || info.AdapterName != "Codex" {
+		t.Fatalf("adapter = %q/%q, want codex/Codex", info.AdapterID, info.AdapterName)
+	}
+	if !hasCapability(info.Capabilities, "semantic_chat") {
+		t.Fatalf("capabilities missing semantic_chat: %v", info.Capabilities)
+	}
+
+	output := sess.Subscribe()
+	readUntil(t, output, "OpenAI Codex", 5*time.Second)
+	waitForHistoryEvent(t, bus, sess.ID, events.TypeChatSystemMessage, 5*time.Second)
+	waitForHistoryEvent(t, bus, sess.ID, events.TypeTerminalNoisyOutput, 5*time.Second)
+	metadata := waitForHarnessMetadataModel(t, bus, sess.ID, "gpt-fake high", 5*time.Second)
+	metadataData := metadata.Data.(events.HarnessMetadata)
+	if metadataData.Model != "gpt-fake high" || metadataData.Version != "0.145.0" {
+		t.Fatalf("metadata = %+v", metadataData)
+	}
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+
+	if err := mgr.SubmitPrompt(sess.ID, "hello fake codex"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	readUntil(t, output, "RECEIVED:hello fake codex", 5*time.Second)
+	user := waitForHistoryEvent(t, bus, sess.ID, events.TypeChatUserMessage, 5*time.Second)
+	if data := user.Data.(events.ChatMessage); data.Content != "hello fake codex" {
+		t.Fatalf("user message = %+v", data)
+	}
+	assistant := waitForHistoryEvent(t, bus, sess.ID, events.TypeChatAssistantMessage, 5*time.Second)
+	if data := assistant.Data.(events.ChatMessage); data.Content != "Fake Codex response to: hello fake codex" || data.MessageID != "codex-turn-1" {
+		t.Fatalf("assistant message = %+v", data)
+	}
+	if !strings.Contains(string(sess.Snapshot()), "MMMMMMMM") {
+		t.Fatal("raw terminal snapshot did not retain fake TUI artifact")
+	}
+}
+
+func TestManagerCodexPromptSubmissionWithoutEventBus(t *testing.T) {
+	mgr := NewManager()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: fixturePath(t, "codex"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	output := sess.Subscribe()
+	readUntil(t, output, "OpenAI Codex", 5*time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err = mgr.SubmitPrompt(sess.ID, "without bus")
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrHarnessNotReady) || time.Now().After(deadline) {
+			t.Fatalf("SubmitPrompt: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	readUntil(t, output, "RECEIVED:without bus", 5*time.Second)
+}
+
+func TestManagerCodexApprovalDenyIsEventBound(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: fixturePath(t, "codex"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	output := sess.Subscribe()
+	readUntil(t, output, "OpenAI Codex", 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "too early"); !errors.Is(err, ErrHarnessNotReady) {
+		t.Fatalf("early SubmitPrompt error = %v, want ErrHarnessNotReady", err)
+	}
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "request approval"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	readUntil(t, output, "Would you like to run the following command?", 5*time.Second)
+	approval := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalRequired, 5*time.Second)
+	waitForPendingAction(t, sess, approval.ID, 5*time.Second)
+
+	if err := mgr.SubmitPrompt(sess.ID, "must be blocked"); !errors.Is(err, ErrApprovalPending) {
+		t.Fatalf("SubmitPrompt while pending error = %v, want ErrApprovalPending", err)
+	}
+	if err := mgr.ExecuteAction(sess.ID, "evt_stale", "codex.approval_deny"); !errors.Is(err, ErrStaleSemanticAction) {
+		t.Fatalf("stale ExecuteAction error = %v", err)
+	}
+	if err := mgr.ExecuteAction(sess.ID, approval.ID, "codex.approval_deny"); err != nil {
+		t.Fatalf("ExecuteAction deny: %v", err)
+	}
+	readUntil(t, output, "DENIED", 5*time.Second)
+	resolved := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalResolved, 5*time.Second)
+	if data := resolved.Data.(events.ApprovalResolved); data.ApprovalEventID != approval.ID || data.Resolution != "denied" {
+		t.Fatalf("approval.resolved = %+v", data)
+	}
+	if err := mgr.ExecuteAction(sess.ID, approval.ID, "codex.approval_deny"); !errors.Is(err, ErrStaleSemanticAction) {
+		t.Fatalf("replayed ExecuteAction error = %v", err)
 	}
 }
 
@@ -641,6 +808,75 @@ func collectEventsByType(sub *events.Subscription, timeout time.Duration) map[ev
 	}
 }
 
+func waitForHistoryEvent(t *testing.T, bus *events.Bus, sessionID string, wanted events.Type, timeout time.Duration) events.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, 0, 1024) {
+			if event.Type == wanted {
+				return event
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q", wanted)
+	return events.Event{}
+}
+
+func waitForPendingAction(t *testing.T, sess *Session, eventID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sess.mu.RLock()
+		pending := sess.pendingAction
+		matched := pending != nil && pending.eventID == eventID
+		sess.mu.RUnlock()
+		if matched {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for pending action %q", eventID)
+}
+
+func waitForHarnessStatus(t *testing.T, bus *events.Bus, sessionID, wanted string, timeout time.Duration) events.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, 0, 1024) {
+			if event.Type != events.TypeHarnessStatus {
+				continue
+			}
+			status, ok := event.Data.(events.HarnessStatus)
+			if ok && status.Status == wanted {
+				return event
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for harness status %q", wanted)
+	return events.Event{}
+}
+
+func waitForHarnessMetadataModel(t *testing.T, bus *events.Bus, sessionID, wanted string, timeout time.Duration) events.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, 0, 1024) {
+			if event.Type != events.TypeHarnessMetadata {
+				continue
+			}
+			metadata, ok := event.Data.(events.HarnessMetadata)
+			if ok && metadata.Model == wanted {
+				return event
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for harness model %q", wanted)
+	return events.Event{}
+}
+
 func TestManagerWithBusPublishesSessionCreated(t *testing.T) {
 	bus := events.NewBus()
 	sub := bus.Subscribe(events.SubscribeOptions{Buffer: 32})
@@ -663,6 +899,13 @@ func TestManagerWithBusPublishesSessionCreated(t *testing.T) {
 	}
 	if created[0].SessionID != sess.ID {
 		t.Fatalf("session.created SessionID = %q, want %q", created[0].SessionID, sess.ID)
+	}
+	payload, ok := created[0].Data.(events.SessionCreated)
+	if !ok {
+		t.Fatalf("session.created Data type = %T, want events.SessionCreated", created[0].Data)
+	}
+	if payload.AdapterID != "generic" || payload.Status != string(StatusStarting) {
+		t.Fatalf("session.created payload = %+v", payload)
 	}
 }
 

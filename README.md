@@ -8,7 +8,7 @@ Stage 1 scope is local-only:
 - REST API and WebSocket event stream
 - Vite/React/xterm.js dashboard
 - raw terminal fallback for arbitrary commands
-- generic harness adapter foundation
+- semantic adapter registry with Generic fallback and a Codex adapter
 - bounded in-memory terminal history and audit metadata
 
 No mobile app, cloud relay, public service, enterprise multi-user control plane, or automatic approval policy is included in Stage 1.
@@ -78,8 +78,15 @@ The dashboard supports:
 - interrupt, terminate, and force-kill controls
 - reconnect by replaying recent in-memory output history
 - compact debug/event inspector
+- adapter identity, capabilities, status, and metadata
+- Codex-aware prompt submission and event-bound safe denial
 
-Chat Mode is a readable interface over the same managed PTY session. It groups user-submitted prompts and terminal output chunks into transcript-style messages, but it does not claim full semantic understanding of every harness. The raw terminal session remains the source of truth and can be opened at any time.
+Chat Mode is a readable interface over the same managed PTY session. Generic
+sessions conservatively project readable terminal output. Codex sessions render
+backend semantic status, metadata, user, assistant, system, and approval events.
+Codex assistant responses are reconstructed from a headless terminal screen
+after redraw activity settles; raw TUI chunks remain exclusively in Terminal
+Mode and never appear directly in the Chat transcript.
 
 Terminal Mode preserves the xterm.js raw terminal experience for exact TUI rendering, keyboard capture, paste, resize, and fallback control.
 
@@ -138,5 +145,8 @@ Fake harnesses live under `testdata/fake-harnesses/` and cover plain output, int
 - [Docs/Spec/Todo.md](Docs/Spec/Todo.md): active implementation checklist
 - [Docs/API.md](Docs/API.md): REST and WebSocket API
 - [Docs/Developer.md](Docs/Developer.md): project structure, tests, adapters, and fake harnesses
+- [Docs/Semantic-Adapters.md](Docs/Semantic-Adapters.md): adapter contracts,
+  capabilities, semantic events, action safety, Codex behavior, and extension
+  guidance
 
 `Docs/Spec/Context.md` should not be edited without owner approval.

@@ -9,6 +9,8 @@
 - `internal/events`: in-memory event bus and bounded event history
 - `internal/harness`: adapter interfaces and registry
 - `internal/harness/generic`: mandatory raw terminal fallback adapter
+- `internal/harness/codex`: Codex detection, semantic parser, prompt submission,
+  and safe deny action
 - `internal/pty`: PTY process runtime
 - `internal/security`: local token auth, CSRF, and origin helpers
 - `internal/session`: session manager and bounded terminal output buffer
@@ -64,6 +66,8 @@ Use fake harnesses instead of real coding tools for automated tests:
 - `interactive-echo.sh`: prompt and input echo
 - `ready-received.sh`: deterministic Chat Mode submit/Enter regression fixture
 - `noisy-tui-artifact.sh`: repeated-character and redraw artifact fixture for Chat Mode filtering
+- `codex`: deterministic executable-basename Codex fixture with Kitty Enter,
+  metadata, redraw noise, status, and approval behavior
 - `long-running.sh`: heartbeat and Ctrl+C behavior
 - `ignore-term.sh`: SIGTERM escalation behavior
 - `resize-aware.sh`: terminal size observation
@@ -86,7 +90,12 @@ Attach mode puts the local terminal in raw mode, forwards input through the daem
 
 Every session must remain usable through raw terminal fallback. Harness-specific adapters should be optional and capability-based.
 
-Chat Mode is intentionally a friendly projection over raw PTY output. Terminal output is stripped into readable transcript blocks where possible, but uncertain TUI state must be verified in Terminal Mode. Do not present Chat Mode as a complete semantic parser until a harness adapter provides reliable structured events.
+Generic Chat Mode is intentionally a friendly projection over raw PTY output.
+Sessions with the Codex adapter use backend semantic events instead and never
+turn Codex raw terminal chunks directly into assistant messages. The Codex
+parser applies chunks to a session-scoped headless xterm screen, then emits the
+rendered response associated with the submitted prompt after output settles.
+Terminal Mode remains the source of truth for both paths.
 
 Core adapter rules:
 
@@ -95,6 +104,20 @@ Core adapter rules:
 - mark heuristic events with confidence
 - never auto-approve actions
 - keep raw terminal visible and usable
+
+The complete adapter contract, event vocabulary, action rules, and extension
+checklist are in `Docs/Semantic-Adapters.md`.
+
+Adapter-focused checks:
+
+```bash
+go test ./internal/harness/... ./internal/session ./internal/api
+npm --prefix web run qa -- --grep "Semantic adapter: fake Codex"
+```
+
+Real Codex validation belongs only in a disposable `/tmp` Git repository. Do
+not run approval research in a production repository and do not approve
+destructive actions.
 
 ## Security Notes
 

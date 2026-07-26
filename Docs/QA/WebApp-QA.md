@@ -43,19 +43,34 @@ Severity: critical
 Steps to reproduce:
 Create a Chat Mode session that emits full-screen TUI redraw bytes, or create a disposable Codex session using command `codex`, empty args, and cwd `/tmp/harnessrelay-qa-codex`.
 Expected:
-Chat Mode must not show mojibake, box-drawing frames, raw ANSI/redraw fragments, or duplicated terminal frames. It should show user-submitted prompts and a clean status card directing the user to Terminal Mode when output cannot be converted to readable chat. Open Terminal must remain visible and work.
+Chat Mode must not show mojibake, box-drawing frames, raw ANSI/redraw fragments,
+or duplicated terminal frames. Semantic adapters should reconstruct readable
+assistant responses from the rendered terminal screen. A clean status card
+should direct the user to Terminal Mode only when output cannot be converted
+safely. Open Terminal must remain visible and work.
 Actual:
-Playwright verified synthetic full-screen TUI output is collapsed to a system card: `Terminal interface output is available in Terminal Mode. Chat Mode could not convert this PTY redraw into readable chat.` No box drawing, mojibake, or escape fragments appeared in the Chat transcript. The Codex smoke in `/tmp/harnessrelay-qa-codex` showed the submitted user prompt in Chat Mode and raw output in Terminal Mode.
+Playwright verified synthetic full-screen TUI output is collapsed to a safe
+system card with no box drawing, mojibake, or escape fragments. The installed
+Codex smoke reconstructed `SEMANTIC_ADAPTER_OK` as a clean assistant bubble in
+Chat while Terminal Mode retained the complete raw TUI.
 Root cause:
 Chat Mode decoded base64 output with `atob` as a binary string and stripped only simple ANSI escapes. Full-screen TUI bytes, alternate-screen/cursor controls, box drawing, and mojibake-like text were treated as readable assistant text.
 Fix summary:
-Added UTF-8 decoding for chat-visible terminal text, byte-preserving xterm writes for Terminal Mode, and Chat Mode projection logic that classifies terminal redraw/TUI output as unsafe for chat and replaces it with a clean Terminal Mode status card.
+Added UTF-8 decoding, byte-preserving xterm writes for Terminal Mode, safe
+generic projection, and a session-scoped headless xterm model for Codex. The
+semantic adapter extracts prompt-delimited assistant responses from the
+rendered screen after a quiet period and emits stable per-turn message IDs.
 Regression test:
 `qa/playwright/harnessrelay.spec.ts` includes a synthetic full-screen TUI regression and a disposable Codex smoke when `codex` is installed.
 Verification commands:
 `npm --prefix web run build`; `go test ./...`; `HARNESSRELAY_TOKEN=dashboard-token npm --prefix web run qa`
 Notes:
-Screenshots inspected: `qa/artifacts/screenshots/chat-codex.png`, `qa/artifacts/screenshots/chat-codex-real.png`, `qa/artifacts/screenshots/chat-shell.png`, and `qa/artifacts/screenshots/terminal-mode.png`. The Chat Mode screenshot is acceptable for QA-001: no raw TUI garbage is visible, the status card is readable, and Open Terminal is visible.
+Screenshots inspected: `qa/artifacts/screenshots/chat-codex.png`,
+`qa/artifacts/screenshots/chat-codex-real.png`,
+`qa/artifacts/screenshots/chat-shell.png`, and
+`qa/artifacts/screenshots/terminal-mode.png`. The final real Codex screenshot
+contains one clean assistant response and no startup, MCP, rate-limit, composer,
+footer, or raw TUI noise.
 
 ## QA-002: Chat Mode leaks noisy Codex/TUI text on initial session start
 
@@ -197,13 +212,22 @@ Severity: critical
 Steps to reproduce:
 Create disposable `/tmp/harnessrelay-qa-codex`, start `codex` in Chat Mode with empty args, send the safe summary prompt, open Terminal Mode, interrupt, and clean up if the process remains live.
 Expected:
-Codex TUI output must not corrupt Chat Mode, Chat Mode must avoid mojibake/box-drawing/raw redraw blocks, user prompt appears as a user message, Open Terminal works, Terminal Mode remains the raw source of truth, and interrupt/terminate cleanup is safe.
+Codex TUI output must not corrupt Chat Mode. The submitted prompt and rendered
+assistant response must appear as chat messages without
+mojibake/box-drawing/raw redraw blocks. Open Terminal must work, Terminal Mode
+must remain the raw source of truth, and interrupt/terminate cleanup must be
+safe.
 Actual:
-Playwright verified the real Codex smoke when `codex` is installed. Chat Mode showed either the clean Terminal Mode status or limited readable information, retained the submitted user prompt, showed no corrupted TUI garbage, opened Terminal Mode, and handled Interrupt. If Interrupt exits Codex, the test verifies the exited/terminated state; otherwise it terminates the live session.
+Playwright verified the installed Codex smoke in a disposable directory. Chat
+showed the submitted prompt and the model-generated `SEMANTIC_ADAPTER_OK`
+assistant response, showed no corrupted TUI garbage, opened Terminal Mode, and
+handled cleanup. A later rerun after adding the model-footer assertion reached
+the account's external usage limit before inference; deterministic metadata
+coverage remained green.
 Root cause:
 Covered by QA-001.
 Fix summary:
-Covered by QA-001.
+Covered by QA-001 and SA-007 in `Docs/QA/Semantic-Adapter-QA.md`.
 Regression test:
 `qa/playwright/harnessrelay.spec.ts` test `QA-001 Codex smoke in disposable directory`.
 Verification commands:
@@ -321,7 +345,7 @@ Verification commands:
 Notes:
 Use only a disposable `/tmp` working directory and do not approve destructive actions.
 
-## Final Verification — QA-002/QA-003 Pass
+## Final Verification — Semantic Adapter Pass
 
 Date: 2026-07-26
 
@@ -338,14 +362,33 @@ rtk env HARNESSRELAY_TOKEN=dashboard-token HARNESSRELAY_DASHBOARD_URL=http://127
 
 Results:
 
-- `go test ./...`: passed, 104 tests across 13 packages.
+- `go test ./...`: passed, 124 tests across 14 packages.
 - `make test`: passed.
 - `npm --prefix web run build`: passed.
 - `make build`: passed.
-- Playwright QA: passed, 12 tests.
-- Legacy CDP dashboard smoke: passed after starting local `harnessd` and headless Chrome CDP.
+- Final deterministic Playwright QA: passed, 12 tests.
+- Installed Codex Playwright smoke: passed earlier in this fix with a clean
+  assistant response in Chat; the final rerun was blocked before inference by
+  the external Codex account usage limit.
+- Legacy CDP dashboard smoke: passed after updating its Manual-form lifecycle
+  selectors and starting local `harnessd` plus headless Chrome CDP.
 
 Manual/real Codex validation:
 
 - `codex --version`: `codex-cli 0.145.0`.
-- Playwright created `/tmp/harnessrelay-qa-codex`, launched `codex` in Chat Mode with empty args, verified no noisy Chat Mode TUI artifacts, submitted the safe prompt through Chat Mode, opened Terminal Mode, and verified the prompt was submitted into the raw TUI without a manual Terminal Mode Enter. The raw Codex TUI remained visible/usable and Interrupt/cleanup behavior was exercised.
+- Playwright created `/tmp/harnessrelay-qa-codex`, launched `codex` in Chat
+  Mode, handled any workspace trust decision explicitly in Terminal Mode,
+  waited for backend adapter readiness, and submitted a safe prompt through
+  Chat. Before the external usage limit was reached, Codex returned
+  `SEMANTIC_ADAPTER_OK`, a response token not present verbatim in the prompt.
+  Chat rendered it as one clean assistant bubble, Terminal Mode retained the
+  raw response, and Interrupt/exit cleanup completed without console errors.
+
+Semantic adapter verification:
+
+- Fake Codex startup, metadata, redraw noise, `MMMMMMMM`, Send, composer Enter,
+  assistant response upserts, command approval denial, mode switching, reload,
+  and multi-session isolation passed in one deterministic Playwright flow.
+- Adapter, parser, session, and API race tests passed.
+- Prompt text and the current Enter sequence use separate serialized PTY writes,
+  fixing intermittent real Codex text-only submission.

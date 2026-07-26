@@ -48,6 +48,7 @@ export function TerminalView({
     let socket: WebSocket | null = null;
     let resizeTimer = 0;
     let disposed = false;
+    let acceptInput = session.status === "starting" || session.status === "running";
 
     const sendResize = () => {
       window.clearTimeout(resizeTimer);
@@ -63,6 +64,7 @@ export function TerminalView({
     resizeObserver.observe(hostRef.current);
 
     term.onData((data) => {
+      if (!acceptInput) return;
       api.input(session.id, data).catch((err) => onError(err.message));
     });
 
@@ -93,6 +95,7 @@ export function TerminalView({
           const event = JSON.parse(message.data) as EventEnvelope;
           latestSeq.current = Math.max(latestSeq.current, event.seq || 0);
           onEvent(event);
+          if (event.type === "session.exited") acceptInput = false;
           if (event.type === "terminal.output") {
             const payload = event.data as { data?: string; bytes?: string };
             const encoded = payload?.bytes || payload?.data;
@@ -112,6 +115,7 @@ export function TerminalView({
 
     return () => {
       disposed = true;
+      acceptInput = false;
       window.clearTimeout(resizeTimer);
       resizeObserver.disconnect();
       socket?.close();

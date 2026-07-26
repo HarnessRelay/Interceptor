@@ -1,6 +1,7 @@
 package generic
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/harnessrelay/interceptor/internal/harness"
@@ -14,6 +15,12 @@ func TestGenericAdapterAlwaysMatches(t *testing.T) {
 	}
 	if adapter.ID() != "generic" {
 		t.Fatalf("ID = %q, want generic", adapter.ID())
+	}
+}
+
+func TestGenericPromptBytesSubmitsCarriageReturn(t *testing.T) {
+	if got := New().PromptBytes("hello", nil); !bytes.Equal(got, []byte("hello\r")) {
+		t.Fatalf("PromptBytes = %q, want text plus carriage return", got)
 	}
 }
 

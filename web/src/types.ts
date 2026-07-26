@@ -7,6 +7,8 @@ export type Session = {
   name?: string;
   harness_type: string;
   adapter_id: string;
+  adapter_name: string;
+  adapter_capabilities: string[];
   command: string;
   args: string[];
   cwd: string;
@@ -30,16 +32,33 @@ export type EventEnvelope = {
 export type SemanticAction = {
   id: string;
   label: string;
+  kind?: "approval" | "input" | "ui" | string;
   style?: "primary" | "secondary" | "danger";
+  danger?: boolean;
   version?: number;
   requires_event_id?: boolean;
 };
 
 export type SemanticEventData = {
+  message_id?: string;
   title?: string;
   summary?: string;
   description?: string;
-  confidence?: string;
+  confidence?: number | string;
+  role?: "user" | "assistant" | "system";
+  content?: string;
+  source?: string;
+  status?: string;
+  detail?: string;
+  model?: string;
+  version?: string;
+  working_directory?: string;
+  operation_kind?: string;
+  command?: string;
+  prompt?: string;
+  approval_event_id?: string;
+  action_id?: string;
+  resolution?: string;
   actions?: SemanticAction[];
 };
 

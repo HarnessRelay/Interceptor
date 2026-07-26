@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -160,6 +162,74 @@ func TestSessionRESTCreateListGetSnapshotAndEvents(t *testing.T) {
 	decodeBody(t, eventsRec, &eventList)
 	if len(eventList.Events) == 0 {
 		t.Fatal("events endpoint returned no events")
+	}
+}
+
+func TestCodexSessionPromptAndApprovalActionAPI(t *testing.T) {
+	router, mgr, bus := newTestRouter()
+	created := createSession(t, router, map[string]any{
+		"name":    "semantic-codex",
+		"command": fixturePath(t, "codex"),
+		"cwd":     t.TempDir(),
+	})
+	t.Cleanup(func() {
+		sess, ok := mgr.Get(created.ID)
+		if !ok || sess.Info().Status != session.StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, created.ID)
+	})
+
+	if created.AdapterID != "codex" || created.AdapterName != "Codex" {
+		t.Fatalf("adapter = %q/%q, want codex/Codex", created.AdapterID, created.AdapterName)
+	}
+	if !slices.Contains(created.AdapterCapabilities, "semantic_chat") ||
+		!slices.Contains(created.AdapterCapabilities, "prompt_submit") {
+		t.Fatalf("adapter capabilities = %v", created.AdapterCapabilities)
+	}
+	waitForManagerSnapshotText(t, mgr, created.ID, "OpenAI Codex", 5*time.Second)
+	waitForBusHarnessStatus(t, bus, created.ID, "idle", 5*time.Second)
+
+	responseRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/prompt", map[string]any{
+		"text": "hello via API",
+	})
+	if responseRec.Code != http.StatusOK {
+		t.Fatalf("response prompt status = %d, body = %s", responseRec.Code, responseRec.Body.String())
+	}
+	assistant := waitForBusEvent(t, bus, created.ID, events.TypeChatAssistantMessage, 5*time.Second)
+	assistantData := assistant.Data.(events.ChatMessage)
+	if assistantData.Content != "Fake Codex response to: hello via API" || assistantData.MessageID != "codex-turn-1" {
+		t.Fatalf("assistant message = %+v", assistantData)
+	}
+	waitForBusHarnessStatus(t, bus, created.ID, "idle", 5*time.Second)
+
+	promptRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/prompt", map[string]any{
+		"text": "request approval",
+	})
+	if promptRec.Code != http.StatusOK {
+		t.Fatalf("prompt status = %d, body = %s", promptRec.Code, promptRec.Body.String())
+	}
+	waitForManagerSnapshotText(t, mgr, created.ID, "Would you like to run the following command?", 5*time.Second)
+	approval := waitForBusEvent(t, bus, created.ID, events.TypeApprovalRequired, 5*time.Second)
+	time.Sleep(20 * time.Millisecond)
+
+	actionRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/actions/codex.approval_deny", map[string]any{
+		"event_id":       approval.ID,
+		"action_version": 1,
+	})
+	if actionRec.Code != http.StatusOK {
+		t.Fatalf("deny action status = %d, body = %s", actionRec.Code, actionRec.Body.String())
+	}
+	waitForManagerSnapshotText(t, mgr, created.ID, "DENIED", 5*time.Second)
+
+	replayRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/actions/codex.approval_deny", map[string]any{
+		"event_id":       approval.ID,
+		"action_version": 1,
+	})
+	if replayRec.Code != http.StatusConflict {
+		t.Fatalf("replayed action status = %d, want %d", replayRec.Code, http.StatusConflict)
 	}
 }
 
@@ -547,13 +617,8 @@ func TestSessionActionRejectsStaleOrUnknownActions(t *testing.T) {
 		"event_id":       "evt_action_test",
 		"action_version": 1,
 	})
-	if unsupportedRec.Code != http.StatusNotImplemented {
-		t.Fatalf("unsupported action status = %d, want %d", unsupportedRec.Code, http.StatusNotImplemented)
-	}
-	var result actionResultResponse
-	decodeBody(t, unsupportedRec, &result)
-	if result.Result.Status != "unsupported" || result.Result.ActionID != "approve_once" {
-		t.Fatalf("unexpected action result: %+v", result.Result)
+	if unsupportedRec.Code != http.StatusConflict {
+		t.Fatalf("unregistered action status = %d, want %d", unsupportedRec.Code, http.StatusConflict)
 	}
 }
 
@@ -770,6 +835,52 @@ func createSession(t *testing.T, router http.Handler, body map[string]any) sessi
 	var resp sessionResponse
 	decodeBody(t, rec, &resp)
 	return resp.Session
+}
+
+func waitForManagerSnapshotText(t *testing.T, mgr *session.Manager, sessionID, wanted string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sess, ok := mgr.Get(sessionID)
+		if ok && strings.Contains(string(sess.Snapshot()), wanted) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for terminal output %q", wanted)
+}
+
+func waitForBusEvent(t *testing.T, bus *events.Bus, sessionID string, wanted events.Type, timeout time.Duration) events.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, 0, 1024) {
+			if event.Type == wanted {
+				return event
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for event %q", wanted)
+	return events.Event{}
+}
+
+func waitForBusHarnessStatus(t *testing.T, bus *events.Bus, sessionID, wanted string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, 0, 1024) {
+			if event.Type != events.TypeHarnessStatus {
+				continue
+			}
+			status, ok := event.Data.(events.HarnessStatus)
+			if ok && status.Status == wanted {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for harness status %q", wanted)
 }
 
 func serveJSON(t *testing.T, router http.Handler, method, path string, body any) *httptest.ResponseRecorder {

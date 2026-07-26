@@ -18,7 +18,8 @@ func TestDetectApprovalHeuristic(t *testing.T) {
 	if data["confidence"] != "heuristic" {
 		t.Fatalf("confidence = %v, want heuristic", data["confidence"])
 	}
-	if len(data["actions"].([]map[string]any)) != 2 {
+	actions := data["actions"].([]map[string]any)
+	if len(actions) != 1 || actions[0]["id"] != "open_terminal" {
 		t.Fatalf("actions = %+v", data["actions"])
 	}
 }

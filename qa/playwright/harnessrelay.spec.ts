@@ -119,7 +119,7 @@ test("Screen 4: Chat Mode with simple shell", async ({ page }) => {
   await page.getByRole("button", { name: "Open Chat" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
   await expect(page.locator(".transcript .message-user", { hasText: `echo chat-mode-works-${unique}` })).toBeVisible();
-  await expect(page.locator(".transcript .message-assistant", { hasText: `chat-mode-works-${unique}` })).toBeVisible();
+  await expect(page.locator(".transcript .message-assistant", { hasText: `chat-mode-works-${unique}` }).first()).toBeVisible();
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Terminate", exact: true }).click();
@@ -388,7 +388,93 @@ test("QA-001: Chat Mode suppresses full-screen TUI redraw garbage", async ({ pag
   await expect(errors).toEqual([]);
 });
 
+test("Semantic adapter: fake Codex remains coherent across chat, terminal, approval, and reload", async ({ page }) => {
+  const errors = await consoleErrors(page);
+  await login(page);
+
+  const unique = Date.now();
+  const sessionName = `pw-semantic-codex-${unique}`;
+  const otherName = `pw-semantic-other-${unique}`;
+  const fakeCodex = path.join(repoRoot, "testdata/fake-harnesses/codex");
+  await createSession(page, { name: sessionName, command: fakeCodex, cwd: "/tmp", mode: "chat" });
+
+  await expect(page.locator(".adapter-badge")).toHaveText("Codex");
+  await expect(page.locator(".session-kicker")).toContainText("Semantic chat");
+  await expect.poll(async () => page.evaluate(async (name) => {
+    const response = await fetch("/api/v1/sessions", { credentials: "same-origin" });
+    const body = await response.json();
+    return body.sessions.find((item: { name?: string }) => item.name === name);
+  }, sessionName)).toMatchObject({
+    adapter_id: "codex",
+    adapter_name: "Codex",
+    adapter_capabilities: expect.arrayContaining(["semantic_chat", "prompt_submit", "approval_detection"])
+  });
+
+  const transcript = page.locator(".transcript");
+  await expect(transcript).toContainText("Codex is running in a terminal interface");
+  await expect(page.locator(".semantic-strip")).toContainText("gpt-fake high");
+  await expect(page.locator(".semantic-strip")).toContainText("Codex 0.145.0");
+  await expect(transcript).not.toContainText("MMMMMMMM");
+  await expectNoChatGarbage(transcript);
+  await expect(page.locator(".chat-status-row")).toContainText("Ready");
+
+  await sendChat(page, `semantic-send-${unique}`);
+  await expect(transcript.locator(".message-user", { hasText: `semantic-send-${unique}` })).toBeVisible();
+  await waitForSnapshotText(page, sessionName, `RECEIVED:semantic-send-${unique}`);
+  await expect(transcript.locator(".message-assistant", { hasText: `Fake Codex response to: semantic-send-${unique}` })).toBeVisible();
+
+  await page.locator(".composer textarea").fill(`semantic-enter-${unique}`);
+  await page.locator(".composer textarea").press("Enter");
+  await expect(transcript.locator(".message-user", { hasText: `semantic-enter-${unique}` })).toBeVisible();
+  await waitForSnapshotText(page, sessionName, `RECEIVED:semantic-enter-${unique}`);
+  await expect(transcript.locator(".message-assistant", { hasText: `Fake Codex response to: semantic-enter-${unique}` })).toBeVisible();
+
+  await page.getByRole("button", { name: "Open Terminal" }).click();
+  await expect(page.locator(".terminal-section")).toBeVisible();
+  await waitForSnapshotText(page, sessionName, "MMMMMMMM");
+  await expect(page.locator(".xterm-rows")).toContainText("MMMMMMMM");
+
+  await page.getByRole("button", { name: "Open Chat" }).click();
+  await expect(page.locator(".chat-view")).toBeVisible();
+  await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
+  await expect(page.locator(".transcript")).toContainText(`Fake Codex response to: semantic-send-${unique}`);
+
+  await sendChat(page, "request approval");
+  const approval = page.locator(".approval-card");
+  await expect(approval).toContainText("Approval required");
+  await expect(approval).toContainText("$ printf safe");
+  await expect(approval.getByRole("button", { name: "Deny" })).toBeVisible();
+  await expect(approval.getByRole("button", { name: "Open Terminal" })).toBeVisible();
+  await approval.getByRole("button", { name: "Deny" }).click();
+  await waitForSnapshotText(page, sessionName, "DENIED");
+  await expect(approval).toBeHidden();
+
+  await createSession(page, { name: otherName, command: "/bin/bash", cwd: "/tmp", mode: "chat" });
+  await sendChat(page, `other-only-${unique}`);
+  await expect(page.locator(".transcript")).toContainText(`other-only-${unique}`);
+  await expect(page.locator(".transcript")).not.toContainText(`semantic-send-${unique}`);
+
+  await selectSession(page, sessionName);
+  await expect(page.locator(".transcript")).toContainText(`Fake Codex response to: semantic-send-${unique}`);
+  await expect(page.locator(".transcript")).not.toContainText(`other-only-${unique}`);
+  await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
+
+  await page.reload();
+  await expect(page.locator(".session-launcher")).toBeVisible();
+  await selectSession(page, sessionName);
+  await expect(page.locator(".adapter-badge")).toHaveText("Codex");
+  await expect(page.locator(".transcript")).toContainText(`Fake Codex response to: semantic-enter-${unique}`);
+  await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
+  await page.screenshot({ path: `${screenshotDir}/semantic-codex.png`, fullPage: true });
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Terminate", exact: true }).click();
+  await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
+  await expect(unexpectedErrors(errors)).toEqual([]);
+});
+
 test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
+  test.setTimeout(90_000);
   try {
     execFileSync("codex", ["--version"], { stdio: "ignore" });
   } catch {
@@ -408,20 +494,42 @@ test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
   }
 
   await login(page);
-  await createSession(page, { name: `codex-qa-${Date.now()}`, command: "codex", cwd, mode: "chat" });
+  const sessionName = `codex-qa-${Date.now()}`;
+  await createSession(page, { name: sessionName, command: "codex", cwd, mode: "chat" });
+  await expect(page.locator(".adapter-badge")).toHaveText("Codex");
   await expect(page.getByRole("button", { name: "Open Terminal" })).toBeVisible();
-  await expect(page.locator(".chat-status-row")).toContainText(/Ready|Terminal UI active|Streaming text/);
-  await expect(page.locator(".transcript")).toContainText(/This session is using a terminal UI|No readable output yet|Readable output will appear/);
+  await expect(page.locator(".transcript")).toContainText(/Codex is running in a terminal interface|Waiting for semantic events/);
   await expectNoChatGarbage(page.locator(".transcript"));
 
-  const prompt = "Summarize this tiny test repository. Do not edit files and do not run destructive commands.";
+  await page.waitForFunction(() => {
+    const status = document.querySelector(".chat-status-row")?.textContent || "";
+    return document.querySelector(".approval-card") || status.includes("Ready");
+  });
+  const trustDecision = page.locator(".approval-card", { hasText: "trust this workspace" });
+  if (await trustDecision.isVisible()) {
+    await trustDecision.getByRole("button", { name: "Open Terminal" }).click();
+    await expect(page.locator(".terminal-section")).toBeVisible();
+    await page.locator(".terminal-host").click();
+    await page.keyboard.press("1");
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Open Chat" }).click();
+  }
+  await expect(page.locator(".chat-status-row")).toContainText("Ready", { timeout: 30_000 });
+
+  const prompt = "Reply with the three uppercase words semantic, adapter, and ok joined by underscores. Do not use tools or edit files.";
   await sendChat(page, prompt);
   await expect(page.locator(".transcript")).toContainText(prompt);
   await expectNoChatGarbage(page.locator(".transcript"));
+  await expect.poll(
+    async () => snapshotText(page, sessionName),
+    { timeout: 30_000, message: "Codex should submit the Chat prompt and return the requested token" }
+  ).toContain("SEMANTIC_ADAPTER_OK");
+  await expect(page.locator(".message-assistant")).toContainText("SEMANTIC_ADAPTER_OK", { timeout: 30_000 });
+  await expect(page.locator(".semantic-strip")).toContainText(/Model gpt-/, { timeout: 10_000 });
+  await page.screenshot({ path: `${screenshotDir}/chat-codex-real.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Open Terminal" }).click();
   await expect(page.locator(".xterm-rows")).toBeVisible();
-  await page.screenshot({ path: `${screenshotDir}/chat-codex-real.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Interrupt" }).click();
   await page.waitForTimeout(500);

@@ -54,7 +54,8 @@ export function SessionHeader({
       <div className="session-header-main">
         <div className="session-kicker">
           <StatusBadge status={session.status} />
-          <span>{session.adapter_id}</span>
+          <span className="adapter-badge">{session.adapter_name || session.adapter_id}</span>
+          {session.adapter_capabilities?.includes("semantic_chat") && <span>Semantic chat</span>}
           <span>{session.terminal.rows}×{session.terminal.cols}</span>
         </div>
         <h2>{session.name || session.command}</h2>

@@ -602,30 +602,47 @@ Goal: prove the adapter architecture with one real harness after the generic run
 
 ## 12.2 Detection
 
-- [ ] Detect the harness command.
-- [ ] Detect visible approval prompt.
-- [ ] Extract useful context if possible.
-- [ ] Emit `approval.required` event.
-- [ ] Include confidence level.
-- [ ] Preserve raw terminal fallback.
+- [x] Detect the harness command.
+- [x] Detect visible approval prompt.
+- [x] Extract useful context if possible.
+- [x] Emit `approval.required` event.
+- [x] Include confidence level.
+- [x] Preserve raw terminal fallback.
 
 ## 12.3 Actions
 
 - [ ] Implement approve action.
-- [ ] Implement deny action.
-- [ ] Implement prompt submission if reliable.
+  - Intentionally deferred: the current Codex adapter never exposes approve-once
+    or persistent approval.
+- [x] Implement deny action.
+- [x] Implement prompt submission if reliable.
 - [ ] Implement command palette opening if reliable.
-- [ ] Add tests with fake output matching the harness pattern.
+- [x] Add tests with fake output matching the harness pattern.
 
 ## 12.4 Manual Validation
 
-- [ ] Run the real harness through the interceptor.
-- [ ] Verify terminal display.
-- [ ] Verify typing.
-- [ ] Verify interrupt.
-- [ ] Verify approval detection.
+- [x] Run the real harness through the interceptor.
+- [x] Verify terminal display.
+- [x] Verify typing.
+- [x] Verify interrupt.
+- [x] Verify approval detection.
 - [ ] Verify approve/deny behavior.
-- [ ] Record limitations.
+  - Safe deny is verified through direct Codex research and the interceptor fake
+    harness. Approve is intentionally not implemented.
+- [x] Record limitations.
+
+## 12.5 Semantic Adapter Integration
+
+- [x] Expose adapter ID, name, and capabilities in session APIs.
+- [x] Emit Codex status, metadata, system, noise, user, and approval events.
+- [x] Keep Codex raw terminal output out of Chat transcript rendering.
+- [x] Reconstruct Codex assistant responses through a headless terminal screen.
+- [x] Replace response revisions by stable semantic turn ID.
+- [x] Restore semantic event history on browser reload.
+- [x] Reject prompt input until Codex reaches adapter `idle`.
+- [x] Detect workspace trust and route the decision to Terminal Mode.
+- [x] Reject stale, unknown, cross-session, and replayed semantic actions.
+- [x] Preserve Generic Chat projection and raw Terminal Mode fallback.
 
 ---
 
@@ -715,13 +732,13 @@ Goal: verify that the interceptor + web dashboard is useful and stable enough to
 
 ## 15.3 Real Harness Validation
 
-- [ ] Run first real coding harness.
-- [ ] Verify raw terminal usability.
-- [ ] Verify session list.
+- [x] Run first real coding harness.
+- [x] Verify raw terminal usability.
+- [x] Verify session list.
 - [ ] Verify reconnect.
-- [ ] Verify interrupt.
-- [ ] Verify terminate.
-- [ ] Verify any adapter-specific behavior.
+- [x] Verify interrupt.
+- [x] Verify terminate.
+- [x] Verify any adapter-specific behavior.
 
 ## 15.4 Security Validation
 

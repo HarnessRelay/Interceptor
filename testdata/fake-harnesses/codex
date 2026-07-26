@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+import os
+import sys
+import termios
+import time
+import tty
+
+
+def write(value: str) -> None:
+    os.write(sys.stdout.fileno(), value.encode())
+
+
+original = termios.tcgetattr(sys.stdin.fileno())
+tty.setraw(sys.stdin.fileno())
+try:
+    write("\x1b[>7u\x1b[2JOpenAI Codex (v0.145.0)\r\n")
+    time.sleep(0.1)
+    write("model: gpt-fake high\r\n")
+    write("directory: /tmp/harnessrelay-fake\r\n")
+    write("MMMMMMMM\r\n┌──────── Codex terminal frame ────────┐\r\n")
+    buffer = bytearray()
+    awaiting_approval = False
+    while True:
+        value = os.read(sys.stdin.fileno(), 1)
+        if not value:
+            break
+        if awaiting_approval and value == b"\x1b":
+            awaiting_approval = False
+            write("\r\nDENIED\r\n")
+            buffer.clear()
+            continue
+        buffer.extend(value)
+        submitted = False
+        if buffer.endswith(b"\x1b[13u"):
+            prompt = bytes(buffer[:-5]).decode(errors="replace")
+            submitted = True
+        elif buffer.endswith(b"\r") or buffer.endswith(b"\n"):
+            prompt = bytes(buffer[:-1]).decode(errors="replace")
+            submitted = True
+        if not submitted:
+            continue
+        buffer.clear()
+        write(f"\r\nRECEIVED:{prompt}\r\nWorking\r\n")
+        if prompt == "request approval":
+            write("Would you like to run the following command?\r\n")
+            write("$ printf safe\r\n")
+            write("1. Yes proceed (y)\r\n")
+            write("3. No and tell Codex what to do differently (esc)\r\n")
+            awaiting_approval = True
+        else:
+            write("READY\r\n")
+            write(f"\x1b[12;1H› {prompt}\x1b[K")
+            write(f"\x1b[15;1H• Fake Codex response to: {prompt}\x1b[K")
+            write("\x1b[18;1H› Write tests for @filename\x1b[K")
+            write("\x1b[20;1Hgpt-fake high · /tmp/harnessrelay-fake\x1b[K")
+finally:
+    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, original)

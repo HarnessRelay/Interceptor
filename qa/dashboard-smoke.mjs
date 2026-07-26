@@ -98,7 +98,11 @@ async function dashboardSmoke(input) {
     return snapshot.chunks.map((chunk) => atob(chunk.bytes)).join("");
   };
   const createSession = async (nameValue, mode, overrides = {}) => {
-    const form = document.querySelector(".create-form");
+    let form = document.querySelector(".create-form");
+    if (!form) {
+      clickText("Manual", document.querySelector(".session-launcher"));
+      form = await waitFor(() => document.querySelector(".create-form"), "manual session form");
+    }
     const [name, command, args, cwd] = [...form.querySelectorAll("input")];
     setValue(name, nameValue);
     setValue(command, overrides.command || "/bin/sh");
@@ -118,7 +122,11 @@ async function dashboardSmoke(input) {
     }
 
     // QA-002: app shell/sidebar exposes the create-session form after auth.
-    await waitFor(() => document.querySelector(".create-form"), "dashboard");
+    await waitFor(() => document.querySelector(".session-launcher"), "dashboard");
+    if (!document.querySelector(".create-form")) {
+      clickText("Manual", document.querySelector(".session-launcher"));
+      await waitFor(() => document.querySelector(".create-form"), "manual session form");
+    }
 
     // QA-003 and QA-004: create a Chat Mode session and verify composer output.
     await createSession(input.chatSessionName, "chat");
@@ -227,7 +235,7 @@ async function reconnectSmoke(input) {
   };
   try {
     // QA-007: reload restores the session list and reconnect snapshot.
-    await waitFor(() => document.querySelector(".create-form"), "dashboard reconnect");
+    await waitFor(() => document.querySelector(".session-launcher"), "dashboard reconnect");
     const reconnectText = await waitFor(async () => {
       if (!document.body.innerText.includes(input.chatSessionName)) return "";
       const list = await fetch("/api/v1/sessions", { credentials: "same-origin" }).then((response) => response.json());

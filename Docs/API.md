@@ -38,6 +38,7 @@ GET    /sessions/{id}
 DELETE /sessions/{id}
 
 POST   /sessions/{id}/input
+POST   /sessions/{id}/prompt
 POST   /sessions/{id}/resize
 POST   /sessions/{id}/interrupt
 POST   /sessions/{id}/terminate
@@ -61,6 +62,21 @@ Create session:
 }
 ```
 
+Session responses include the selected adapter:
+
+```json
+{
+  "adapter_id": "codex",
+  "adapter_name": "Codex",
+  "adapter_capabilities": [
+    "raw_terminal",
+    "semantic_chat",
+    "prompt_submit",
+    "approval_detection"
+  ]
+}
+```
+
 Input:
 
 ```json
@@ -74,6 +90,19 @@ Named special keys:
 ```
 
 Supported names include `Enter`, `Escape`, `Tab`, `Backspace`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, and `CtrlC`.
+
+Adapter-aware Chat prompt:
+
+```json
+{ "text": "Summarize this repository." }
+```
+
+`POST /sessions/{id}/prompt` asks the selected adapter for one atomic prompt
+submission sequence. Generic uses carriage return. Codex uses Kitty keyboard
+protocol Enter when the TUI has enabled it. Empty prompts are rejected, prompts
+are limited to 65536 bytes, and prompts are rejected while an approval action is
+pending or while a semantic harness has not reached `idle`. Audit metadata
+stores the byte count, not the prompt.
 
 Resize:
 
@@ -104,13 +133,26 @@ Snapshot returns recent raw replay chunks:
 }
 ```
 
-Semantic actions currently validate event/action freshness and return `501` for recognized actions because no real harness action executor is implemented yet. Stale or unknown actions return `409`.
+Semantic actions validate the session, source event, advertised action,
+version, and current pending adapter state. The Codex adapter implements only
+`codex.approval_deny`; it sends Escape for the currently pending matching
+approval and emits `approval.resolved`. Replays, stale events, version
+mismatches, and unknown actions return `409`. A recognized action without an
+adapter executor returns `501`.
+
+`open_terminal` is a UI action and is handled locally by the dashboard. It is
+never written to the PTY.
 
 ## Dashboard Display Modes
 
 Chat Mode and Terminal Mode are dashboard presentation preferences over the same session APIs. No backend API shape is currently changed for mode selection.
 
-- Chat Mode sends composer submissions to `POST /sessions/{id}/input` as raw PTY bytes followed by Enter.
+- Chat Mode sends composer submissions to `POST /sessions/{id}/prompt`.
+- Sessions with `semantic_chat` render semantic event history and live events;
+  they do not project raw terminal chunks directly into assistant messages.
+  Codex emits `chat.assistant_message` only after reconstructing the rendered
+  response through its terminal screen model.
+- Generic sessions retain conservative terminal projection.
 - The `/` action menu uses existing input, interrupt, terminate, kill, snapshot, and key endpoints.
 - Terminal Mode uses the same snapshot, WebSocket, input, and resize endpoints as the original xterm.js view.
 - Mode preference is currently stored in browser-local state per session. The raw PTY session remains the source of truth.
@@ -143,8 +185,54 @@ Common event types:
 - `session.status_changed`
 - `session.exited`
 - `approval.required`
+- `approval.resolved`
+- `harness.detected`
+- `harness.status`
+- `harness.metadata`
+- `chat.user_message`
+- `chat.assistant_message`
+- `chat.system_message`
+- `terminal.noisy_output`
+- `adapter.warning`
+- `adapter.error`
 - `error`
 
 Terminal output bytes are JSON base64 data.
 
-The generic adapter may emit `approval.required` when terminal text looks like an approval prompt. These events include `confidence: "heuristic"` and command/cwd context. Raw terminal access remains the source of truth. Action buttons are exposed for UI consistency, but Stage 1 returns `501` until a specific adapter implements reliable approve/deny execution.
+Assistant messages may include `message_id`. Multiple events with the same
+`message_id` are revisions of one semantic turn; clients replace the earlier
+content during live delivery and history replay.
+
+The generic adapter may emit `approval.required` when terminal text looks like
+an approval prompt. These events include `confidence: "heuristic"` and expose
+only `open_terminal`.
+
+The Codex adapter emits a typed `approval.required` payload:
+
+```json
+{
+  "operation_kind": "shell_command",
+  "command": "npm test",
+  "working_directory": "/tmp/project",
+  "prompt": "Codex is asking whether it may run this command.",
+  "confidence": 0.95,
+  "actions": [
+    {
+      "id": "codex.approval_deny",
+      "label": "Deny",
+      "kind": "approval",
+      "requires_event_id": true,
+      "version": 1
+    },
+    {
+      "id": "open_terminal",
+      "label": "Open Terminal",
+      "kind": "ui",
+      "requires_event_id": true,
+      "version": 1
+    }
+  ]
+}
+```
+
+No approve or persistent-approval action is exposed.

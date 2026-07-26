@@ -73,18 +73,13 @@ func (b *Bus) Publish(ctx context.Context, event Event) Event {
 		b.mu.Unlock()
 	}
 	b.mu.RLock()
-	subs := make([]chan Event, 0, len(b.subs))
+	defer b.mu.RUnlock()
 	for _, e := range b.subs {
 		if !b.matchLocked(e, event) {
 			continue
 		}
-		subs = append(subs, e.ch)
-	}
-	b.mu.RUnlock()
-
-	for _, ch := range subs {
 		select {
-		case ch <- event:
+		case e.ch <- event:
 		default:
 		}
 	}

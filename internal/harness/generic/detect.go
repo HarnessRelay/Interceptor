@@ -24,16 +24,10 @@ func DetectApproval(text, command, cwd string) (events.Event, bool) {
 			},
 			"actions": []map[string]any{
 				{
-					"id":                "approve_once",
-					"label":             "Approve once",
-					"style":             "primary",
-					"requires_event_id": true,
-					"version":           1,
-				},
-				{
-					"id":                "deny",
-					"label":             "Deny",
-					"style":             "danger",
+					"id":                "open_terminal",
+					"label":             "Open Terminal",
+					"kind":              "ui",
+					"style":             "secondary",
 					"requires_event_id": true,
 					"version":           1,
 				},

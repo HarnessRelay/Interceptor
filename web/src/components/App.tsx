@@ -94,7 +94,10 @@ export function App() {
   }, [activeID]);
 
   const handleSessionEvent = useCallback((event: EventEnvelope) => {
-    setEvents((current) => [event, ...current].slice(0, 120));
+    setEvents((current) => {
+      if (current.some((item) => item.id === event.id)) return current;
+      return [event, ...current].slice(0, 1024);
+    });
   }, []);
 
   const setChatMessages = useCallback((sessionID: string, updater: ChatMessagesUpdater) => {
@@ -163,7 +166,11 @@ export function App() {
                 onError={setError}
               />
             )}
-            <EventInspector events={activeEvents} onError={setError} />
+            <EventInspector
+              events={activeEvents}
+              onOpenTerminal={() => setSessionMode(active.id, "terminal")}
+              onError={setError}
+            />
           </>
         ) : (
           <EmptyState loading={loading} />

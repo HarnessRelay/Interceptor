@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -81,6 +82,10 @@ type inputRequest struct {
 	Key      string `json:"key"`
 }
 
+type promptRequest struct {
+	Text string `json:"text"`
+}
+
 type resizeRequest struct {
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`
@@ -115,21 +120,23 @@ type actionResult struct {
 }
 
 type sessionDTO struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name,omitempty"`
-	HarnessType string      `json:"harness_type"`
-	AdapterID   string      `json:"adapter_id"`
-	Command     string      `json:"command"`
-	Args        []string    `json:"args"`
-	CWD         string      `json:"cwd"`
-	Status      string      `json:"status"`
-	PID         int         `json:"pid,omitempty"`
-	PGID        int         `json:"pgid,omitempty"`
-	Terminal    terminalDTO `json:"terminal"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
-	ExitedAt    *time.Time  `json:"exited_at,omitempty"`
-	ExitCode    *int        `json:"exit_code,omitempty"`
+	ID                  string      `json:"id"`
+	Name                string      `json:"name,omitempty"`
+	HarnessType         string      `json:"harness_type"`
+	AdapterID           string      `json:"adapter_id"`
+	AdapterName         string      `json:"adapter_name"`
+	AdapterCapabilities []string    `json:"adapter_capabilities"`
+	Command             string      `json:"command"`
+	Args                []string    `json:"args"`
+	CWD                 string      `json:"cwd"`
+	Status              string      `json:"status"`
+	PID                 int         `json:"pid,omitempty"`
+	PGID                int         `json:"pgid,omitempty"`
+	Terminal            terminalDTO `json:"terminal"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
+	ExitedAt            *time.Time  `json:"exited_at,omitempty"`
+	ExitCode            *int        `json:"exit_code,omitempty"`
 }
 
 type harnessDTO struct {
@@ -213,6 +220,7 @@ func NewRouter(opts Options) http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions/{id}", opts.requireAuth(opts.handleGetSession))
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}", opts.requireAuth(opts.handleDeleteSession))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/input", opts.requireAuth(opts.handleSessionInput))
+	mux.HandleFunc("POST /api/v1/sessions/{id}/prompt", opts.requireAuth(opts.handleSessionPrompt))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/resize", opts.requireAuth(opts.handleSessionResize))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/interrupt", opts.requireAuth(opts.handleSessionInterrupt))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate", opts.requireAuth(opts.handleSessionTerminate))
@@ -391,6 +399,33 @@ func (opts Options) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	}
 	opts.recordAudit("session.input", id, map[string]any{"bytes": len(data)})
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "bytes": len(data)})
+}
+
+func (opts Options) handleSessionPrompt(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := opts.Sessions.Get(id); !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	var req promptRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Text == "" {
+		writeError(w, http.StatusBadRequest, "prompt text is required")
+		return
+	}
+	if len([]byte(req.Text)) > 64*1024 {
+		writeError(w, http.StatusRequestEntityTooLarge, "prompt exceeds 65536 byte limit")
+		return
+	}
+	if err := opts.Sessions.SubmitPrompt(id, req.Text); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	opts.recordAudit("session.prompt", id, map[string]any{"bytes": len([]byte(req.Text))})
+	writeJSON(w, http.StatusOK, map[string]any{"accepted": true})
 }
 
 func (opts Options) handleSessionResize(w http.ResponseWriter, r *http.Request) {
@@ -591,8 +626,31 @@ func (opts Options) handleSessionAction(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "stale or unknown action")
 		return
 	}
-	writeJSON(w, http.StatusNotImplemented, actionResultResponse{Result: actionResult{
-		Status:   "unsupported",
+	if err := opts.Sessions.ExecuteAction(id, req.EventID, actionID); err != nil {
+		switch {
+		case errors.Is(err, session.ErrStaleSemanticAction):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, session.ErrUnsupportedAction):
+			writeJSON(w, http.StatusNotImplemented, actionResultResponse{Result: actionResult{
+				Status:   "unsupported",
+				EventID:  req.EventID,
+				ActionID: actionID,
+			}})
+		default:
+			writeError(w, http.StatusConflict, err.Error())
+		}
+		return
+	}
+	opts.Events.Publish(r.Context(), events.Event{
+		Type:      events.TypeActionCompleted,
+		SessionID: id,
+		Data: map[string]any{
+			"event_id":  req.EventID,
+			"action_id": actionID,
+		},
+	})
+	writeJSON(w, http.StatusOK, actionResultResponse{Result: actionResult{
+		Status:   "completed",
 		EventID:  req.EventID,
 		ActionID: actionID,
 	}})
@@ -671,16 +729,18 @@ func sessionToDTO(info session.Info) sessionDTO {
 		updatedAt = *info.ExitedAt
 	}
 	return sessionDTO{
-		ID:          info.ID,
-		Name:        info.Name,
-		HarnessType: info.HarnessType,
-		AdapterID:   "generic",
-		Command:     info.Command,
-		Args:        info.Args,
-		CWD:         info.WorkDir,
-		Status:      string(info.Status),
-		PID:         info.PID,
-		PGID:        info.PGID,
+		ID:                  info.ID,
+		Name:                info.Name,
+		HarnessType:         info.HarnessType,
+		AdapterID:           info.AdapterID,
+		AdapterName:         info.AdapterName,
+		AdapterCapabilities: capabilitiesToStrings(info.Capabilities),
+		Command:             info.Command,
+		Args:                info.Args,
+		CWD:                 info.WorkDir,
+		Status:              string(info.Status),
+		PID:                 info.PID,
+		PGID:                info.PGID,
 		Terminal: terminalDTO{
 			Rows: info.Terminal.Rows,
 			Cols: info.Terminal.Cols,
@@ -690,6 +750,14 @@ func sessionToDTO(info session.Info) sessionDTO {
 		ExitedAt:  info.ExitedAt,
 		ExitCode:  info.ExitCode,
 	}
+}
+
+func capabilitiesToStrings(capabilities []harness.Capability) []string {
+	out := make([]string, len(capabilities))
+	for i, capability := range capabilities {
+		out[i] = string(capability)
+	}
+	return out
 }
 
 func harnessToDTO(detected harness.Detected) harnessDTO {

@@ -2,13 +2,26 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { EventEnvelope, SemanticAction, SemanticEventData } from "../types";
 
-export function EventInspector({ events, onError }: { events: EventEnvelope[]; onError: (message: string) => void }) {
+export function EventInspector({
+  events,
+  onOpenTerminal,
+  onError
+}: {
+  events: EventEnvelope[];
+  onOpenTerminal: () => void;
+  onError: (message: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [actionState, setActionState] = useState<Record<string, string>>({});
 
   async function submit(event: EventEnvelope, action: SemanticAction) {
     if (!event.session_id) return;
     const key = `${event.id}:${action.id}`;
+    if (action.kind === "ui" && action.id === "open_terminal") {
+      onOpenTerminal();
+      setActionState((current) => ({ ...current, [key]: "Opened" }));
+      return;
+    }
     setActionState((current) => ({ ...current, [key]: "Submitting" }));
     try {
       await api.submitAction(event.session_id, event.id, action);
@@ -71,7 +84,7 @@ function SemanticActionCard({
         {data.actions.map((action) => {
           const state = actionState[`${event.id}:${action.id}`];
           return (
-            <button key={action.id} className={action.style === "danger" ? "danger-button" : action.style === "primary" ? "primary-button" : undefined} onClick={() => onSubmit(event, action)}>
+            <button key={action.id} className={action.danger || action.style === "danger" ? "danger-button" : action.style === "primary" ? "primary-button" : undefined} onClick={() => onSubmit(event, action)}>
               {state || action.label || action.id}
             </button>
           );
