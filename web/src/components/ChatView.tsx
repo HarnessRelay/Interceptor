@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { EventEnvelope, SemanticAction, SemanticEventData, Session } from "../types";
+import type { EventEnvelope, HarnessCommand, SemanticAction, SemanticEventData, Session } from "../types";
 import { decodeBase64, isLive, projectTerminalOutputForChat, terminalOutputText } from "../utils";
 import { Confirmation, ConfirmDialog } from "./ConfirmDialog";
 import { SlashCommandMenu } from "./SlashCommandMenu";
@@ -43,12 +43,15 @@ export function ChatView({
   const [activity, setActivity] = useState<ActivityState>(isLive(session.status) ? "connecting" : "ended");
   const [activityDetail, setActivityDetail] = useState("");
   const [slashOpen, setSlashOpen] = useState(false);
+  const [harnessCommands, setHarnessCommands] = useState<HarnessCommand[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [actionState, setActionState] = useState<Record<string, string>>({});
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const latestSeq = useRef(0);
   const activityTimer = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const semanticAdapter = session.adapter_capabilities?.includes("semantic_chat") ?? false;
   const canSend = isLive(session.status) && (!semanticAdapter || activity === "ready");
 
@@ -116,13 +119,37 @@ export function ChatView({
   }, [session.status, connected, semanticAdapter]);
 
   useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
   }, [messages]);
 
   const metadata = useMemo(() => {
     const event = events.find((item) => item.type === "harness.metadata");
     return event?.data as SemanticEventData | undefined;
   }, [events]);
+
+  useEffect(() => {
+    if (!session.adapter_capabilities?.includes("command_catalog")) {
+      setHarnessCommands([]);
+      return;
+    }
+    let disposed = false;
+    setCatalogLoading(true);
+    api.commands(session.id)
+      .then((catalog) => {
+        if (!disposed) setHarnessCommands(catalog.commands);
+      })
+      .catch(() => {
+        if (!disposed) setHarnessCommands([]);
+      })
+      .finally(() => {
+        if (!disposed) setCatalogLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [session.id, session.adapter_capabilities, metadata?.version]);
 
   const approvals = useMemo(() => {
     const resolved = new Set(
@@ -197,6 +224,12 @@ export function ChatView({
   async function sendPrompt() {
     const value = prompt.trim();
     if (!value || !canSend) return;
+    const command = matchHarnessCommand(value, harnessCommands);
+    if (command) {
+      setPrompt("");
+      await invokeHarnessCommand(command, value.slice(command.invocation.length).trim());
+      return;
+    }
     setPrompt("");
     setActivity("thinking");
     setActivityDetail(`${session.adapter_name || session.adapter_id} is receiving the prompt.`);
@@ -205,6 +238,28 @@ export function ChatView({
     } catch (err) {
       setPrompt(value);
       onError((err as Error).message);
+    }
+  }
+
+  async function invokeHarnessCommand(command: HarnessCommand, argumentsValue = "") {
+    setSlashOpen(false);
+    if (command.interaction === "insert" && argumentsValue === "") {
+      setPrompt(`${command.invocation} `);
+      window.requestAnimationFrame(() => promptRef.current?.focus());
+      return;
+    }
+    try {
+      const invoked = await api.submitCommand(session.id, command.id, argumentsValue);
+      setActivityDetail(`${invoked.invocation} sent to ${session.adapter_name || session.adapter_id}.`);
+      if (invoked.interaction === "submit_then_terminal" || invoked.interaction === "prefill_terminal") {
+        onOpenTerminal();
+      } else {
+        window.requestAnimationFrame(() => promptRef.current?.focus());
+      }
+    } catch (err) {
+      const message = (err as Error).message;
+      onError(message);
+      if (argumentsValue) setPrompt(`${command.invocation} ${argumentsValue}`);
     }
   }
 
@@ -241,6 +296,11 @@ export function ChatView({
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "/" && prompt.trim() === "" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      setSlashOpen(true);
+      return;
+    }
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
     void sendPrompt();
@@ -337,6 +397,7 @@ export function ChatView({
           );
         })}
         <div className="transcript" ref={transcriptRef} role="log" aria-label="Session conversation" aria-live="polite">
+          <div className="transcript-inner">
           {messages.length === 0 ? (
             <div className="message system-message">
               <span className="system-icon" aria-hidden="true">◇</span>
@@ -355,6 +416,7 @@ export function ChatView({
               </article>
             ))
           )}
+          </div>
         </div>
       </div>
       <form className="composer" onSubmit={submit}>
@@ -362,14 +424,27 @@ export function ChatView({
           <button type="button" className="slash-button" onClick={() => setSlashOpen((open) => !open)} aria-expanded={slashOpen}>
             <span aria-hidden="true">/</span><span className="visually-hidden">Open session actions</span>
           </button>
-          <SlashCommandMenu open={slashOpen} onAction={runAction} onClose={() => setSlashOpen(false)} />
+          <SlashCommandMenu
+            open={slashOpen}
+            harnessName={session.adapter_name || session.adapter_id}
+            harnessCommands={harnessCommands}
+            catalogLoading={catalogLoading}
+            onHarnessCommand={(command) => void invokeHarnessCommand(command)}
+            onAction={runAction}
+            onClose={() => {
+              setSlashOpen(false);
+              window.requestAnimationFrame(() => promptRef.current?.focus());
+            }}
+          />
         </div>
         <label className="composer-input">
           <span className="visually-hidden">Message to harness</span>
-          <textarea aria-describedby="composer-hint" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} placeholder={semanticAdapter && !canSend ? "Waiting for the harness to become ready" : `Message ${session.adapter_name || "harness"}`} disabled={!canSend} />
-          <small id="composer-hint">Enter to send · Shift+Enter for a new line</small>
+          <textarea ref={promptRef} aria-describedby="composer-hint" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} placeholder={semanticAdapter && !canSend ? "Waiting for the harness to become ready" : `Message ${session.adapter_name || "harness"}`} disabled={!canSend} />
         </label>
-        <button className="primary-button" disabled={!canSend || prompt.trim() === ""}>Send</button>
+        <div className="composer-toolbar">
+          <small id="composer-hint">Enter to send · Shift+Enter for a new line</small>
+          <button className="primary-button" disabled={!canSend || prompt.trim() === ""}>Send</button>
+        </div>
       </form>
       <ConfirmDialog
         confirmation={confirmation}
@@ -379,6 +454,12 @@ export function ChatView({
       />
     </section>
   );
+}
+
+function matchHarnessCommand(value: string, commands: HarnessCommand[]): HarnessCommand | undefined {
+  if (!value.startsWith("/")) return undefined;
+  const token = value.split(/\s/, 1)[0].toLowerCase();
+  return commands.find((command) => command.invocation.toLowerCase() === token);
 }
 
 function semanticMessages(eventList: EventEnvelope[]): ChatMessage[] {

@@ -1,4 +1,4 @@
-import type { AuthStatus, CreateForm, EventEnvelope, HarnessPreset, SemanticAction, Session, Snapshot } from "../types";
+import type { AuthStatus, CommandCatalog, CreateForm, EventEnvelope, HarnessCommand, HarnessPreset, SemanticAction, Session, Snapshot } from "../types";
 import { encodeBase64, isUnsafeMethod, splitArgs } from "../utils";
 
 let csrfToken = "";
@@ -57,6 +57,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text })
     });
+  },
+  async commands(id: string): Promise<CommandCatalog> {
+    return request<CommandCatalog>(`/api/v1/sessions/${id}/commands`);
+  },
+  async submitCommand(id: string, commandID: string, args = ""): Promise<HarnessCommand> {
+    const data = await request<{ accepted: boolean; command: HarnessCommand }>(
+      `/api/v1/sessions/${id}/commands/${encodeURIComponent(commandID)}`,
+      { method: "POST", body: JSON.stringify({ arguments: args }) }
+    );
+    return data.command;
   },
   async key(id: string, key: string): Promise<void> {
     await request(`/api/v1/sessions/${id}/input`, {

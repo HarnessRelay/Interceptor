@@ -270,11 +270,27 @@ Commands and results:
   environment: passed.
 - Final targeted Terminal Mode regression after the resize-loop guard: passed.
 
-Manual checks confirmed the eleven screenshots exist, the inspector is closed
+Manual checks confirmed the twelve screenshots exist, the inspector is closed
 by default, menus/dialogs are not clipped at the review viewport, Chat Mode has
 no TUI garbage, the real Codex response rendered cleanly with model metadata,
 Terminal Mode retained raw output, and mode/session switching did not restart
 or mix sessions.
+
+## Command palette and chat-rail follow-up
+
+- Replaced the narrow session-action menu with a searchable unified command
+  palette using dialog, combobox, and listbox semantics.
+- Verified Generic sessions expose HarnessRelay controls and verified
+  `codex-cli 0.145.x` sessions also expose adapter-owned slash commands.
+- Verified `/status` stays in Chat Mode and argument-bearing `/rename` returns
+  focus to the composer; native and sensitive flows preserve Terminal fallback.
+- Standardized transcript, approval, and composer content on one 960px rail.
+  Short histories now sit near the composer; long histories scroll normally.
+- Split the composer into textarea and toolbar rows with 44px controls and an
+  80px Send action.
+- Visual QA caught and fixed delayed smooth scrolling that could partially
+  clip the newest bubble at the composer boundary.
+- Playwright passed 14/14, including fake and disposable real Codex coverage.
 
 ## Remaining limitations
 

@@ -86,6 +86,21 @@ type promptRequest struct {
 	Text string `json:"text"`
 }
 
+type commandRequest struct {
+	Arguments string `json:"arguments"`
+}
+
+type commandsResponse struct {
+	Supported bool                        `json:"supported"`
+	Commands  []harness.CommandDescriptor `json:"commands"`
+	Fallback  string                      `json:"fallback,omitempty"`
+}
+
+type commandResultResponse struct {
+	Accepted bool                      `json:"accepted"`
+	Command  harness.CommandDescriptor `json:"command"`
+}
+
 type resizeRequest struct {
 	Rows uint16 `json:"rows"`
 	Cols uint16 `json:"cols"`
@@ -221,6 +236,8 @@ func NewRouter(opts Options) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}", opts.requireAuth(opts.handleDeleteSession))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/input", opts.requireAuth(opts.handleSessionInput))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/prompt", opts.requireAuth(opts.handleSessionPrompt))
+	mux.HandleFunc("GET /api/v1/sessions/{id}/commands", opts.requireAuth(opts.handleSessionCommands))
+	mux.HandleFunc("POST /api/v1/sessions/{id}/commands/{command_id}", opts.requireAuth(opts.handleSessionCommand))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/resize", opts.requireAuth(opts.handleSessionResize))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/interrupt", opts.requireAuth(opts.handleSessionInterrupt))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/terminate", opts.requireAuth(opts.handleSessionTerminate))
@@ -426,6 +443,61 @@ func (opts Options) handleSessionPrompt(w http.ResponseWriter, r *http.Request) 
 	}
 	opts.recordAudit("session.prompt", id, map[string]any{"bytes": len([]byte(req.Text))})
 	writeJSON(w, http.StatusOK, map[string]any{"accepted": true})
+}
+
+func (opts Options) handleSessionCommands(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := opts.Sessions.Get(id); !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	commands, err := opts.Sessions.CommandCatalog(id)
+	if err != nil {
+		if errors.Is(err, session.ErrCommandUnsupported) {
+			writeJSON(w, http.StatusOK, commandsResponse{Supported: false, Commands: []harness.CommandDescriptor{}, Fallback: "terminal"})
+			return
+		}
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if commands == nil {
+		commands = []harness.CommandDescriptor{}
+	}
+	writeJSON(w, http.StatusOK, commandsResponse{Supported: len(commands) > 0, Commands: commands, Fallback: "terminal"})
+}
+
+func (opts Options) handleSessionCommand(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := opts.Sessions.Get(id); !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	var req commandRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if len([]byte(req.Arguments)) > 16*1024 {
+		writeError(w, http.StatusRequestEntityTooLarge, "command arguments exceed 16384 byte limit")
+		return
+	}
+	command, err := opts.Sessions.SubmitCommand(id, r.PathValue("command_id"), req.Arguments)
+	if err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, session.ErrCommandUnknown) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	opts.recordAudit("session.command", id, map[string]any{
+		"command_id":     command.ID,
+		"argument_bytes": len([]byte(req.Arguments)),
+		"interaction":    command.Interaction,
+	})
+	writeJSON(w, http.StatusOK, commandResultResponse{Accepted: true, Command: command})
 }
 
 func (opts Options) handleSessionResize(w http.ResponseWriter, r *http.Request) {

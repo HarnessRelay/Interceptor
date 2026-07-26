@@ -95,6 +95,27 @@ export type HarnessPreset = {
   description: string;
 };
 
+export type HarnessCommandInteraction = "submit" | "submit_then_terminal" | "prefill_terminal" | "insert";
+
+export type HarnessCommand = {
+  id: string;
+  invocation: string;
+  label: string;
+  description: string;
+  group: string;
+  interaction: HarnessCommandInteraction;
+  argument_hint?: string;
+  danger?: boolean;
+  availability?: string;
+  availability_note?: string;
+};
+
+export type CommandCatalog = {
+  supported: boolean;
+  commands: HarnessCommand[];
+  fallback?: "terminal" | string;
+};
+
 export type AuthStatus = {
   authenticated: boolean;
   csrf_token?: string;

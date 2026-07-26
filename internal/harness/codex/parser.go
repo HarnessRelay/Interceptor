@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
@@ -196,6 +197,96 @@ func (p *Parser) PromptSequence(text string, _ []byte) [][]byte {
 		key = []byte(kittyEnter)
 	}
 	return [][]byte{[]byte(text), key}
+}
+
+// CommandCatalog returns the catalog verified against codex-cli 0.145.x.
+// Unknown versions deliberately fall back to the raw terminal command menu.
+func (p *Parser) CommandCatalog() []harness.CommandDescriptor {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !strings.HasPrefix(p.lastMetadata.Version, "0.145.") {
+		return nil
+	}
+	return append([]harness.CommandDescriptor(nil), codex0145Commands...)
+}
+
+// CommandSequence builds a catalog-validated command without opening an agent turn.
+func (p *Parser) CommandSequence(commandID, arguments string) ([][]byte, harness.CommandDescriptor, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !strings.HasPrefix(p.lastMetadata.Version, "0.145.") {
+		return nil, harness.CommandDescriptor{}, errors.New("codex command catalog is unavailable for this version")
+	}
+	var command harness.CommandDescriptor
+	found := false
+	for _, candidate := range codex0145Commands {
+		if candidate.ID == commandID {
+			command = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, harness.CommandDescriptor{}, errors.New("unknown Codex command")
+	}
+	arguments = strings.TrimSpace(arguments)
+	if command.ArgumentHint != "" && arguments == "" && command.Interaction != harness.CommandInsert {
+		return nil, harness.CommandDescriptor{}, errors.New("command arguments are required")
+	}
+	text := command.Invocation
+	if arguments != "" {
+		text += " " + arguments
+	}
+	if command.Interaction == harness.CommandPrefillTerminal {
+		return [][]byte{[]byte(text)}, command, nil
+	}
+	key := []byte{'\r'}
+	if p.kittyKeyboard.Load() {
+		key = []byte(kittyEnter)
+	}
+	return [][]byte{[]byte(text), key}, command, nil
+}
+
+var codex0145Commands = []harness.CommandDescriptor{
+	{ID: "status", Invocation: "/status", Label: "Status", Description: "Show model, permissions, workspace, and context usage.", Group: "Inspect", Interaction: harness.CommandSubmit},
+	{ID: "diff", Invocation: "/diff", Label: "Diff", Description: "Show the current Git diff, including untracked files.", Group: "Inspect", Interaction: harness.CommandSubmit},
+	{ID: "usage", Invocation: "/usage", Label: "Usage", Description: "Show account token usage and reset information.", Group: "Inspect", Interaction: harness.CommandSubmit},
+	{ID: "debug-config", Invocation: "/debug-config", Label: "Debug config", Description: "Show effective configuration and policy diagnostics.", Group: "Inspect", Interaction: harness.CommandSubmit},
+	{ID: "copy", Invocation: "/copy", Label: "Copy latest output", Description: "Copy the latest completed Codex response.", Group: "Inspect", Interaction: harness.CommandSubmit},
+	{ID: "ps", Invocation: "/ps", Label: "Background terminals", Description: "Show background terminals and recent output.", Group: "Inspect", Interaction: harness.CommandSubmit},
+	{ID: "compact", Invocation: "/compact", Label: "Compact context", Description: "Summarize the conversation to free context.", Group: "Conversation", Interaction: harness.CommandSubmit},
+	{ID: "review", Invocation: "/review", Label: "Review changes", Description: "Ask Codex to review the working tree.", Group: "Conversation", Interaction: harness.CommandSubmit},
+	{ID: "fast", Invocation: "/fast", Label: "Toggle Fast mode", Description: "Toggle the catalog-provided Fast service tier.", Group: "Conversation", Interaction: harness.CommandSubmit, Availability: "conditional", AvailabilityNote: "Shown by Codex only when the active model supports Fast mode."},
+	{ID: "raw", Invocation: "/raw", Label: "Toggle raw scrollback", Description: "Toggle Codex raw scrollback mode.", Group: "Conversation", Interaction: harness.CommandSubmit},
+	{ID: "rename", Invocation: "/rename", Label: "Rename chat", Description: "Give the current chat a recognizable name.", Group: "Conversation", Interaction: harness.CommandInsert, ArgumentHint: "name"},
+	{ID: "plan", Invocation: "/plan", Label: "Plan mode", Description: "Switch to plan mode, optionally with a request.", Group: "Conversation", Interaction: harness.CommandInsert, ArgumentHint: "optional request"},
+	{ID: "goal", Invocation: "/goal", Label: "Goal", Description: "Set, view, edit, pause, resume, or clear a goal.", Group: "Conversation", Interaction: harness.CommandInsert, ArgumentHint: "objective or action"},
+	{ID: "mention", Invocation: "/mention", Label: "Mention file", Description: "Attach a file or folder to the next request.", Group: "Conversation", Interaction: harness.CommandInsert, ArgumentHint: "path"},
+	{ID: "side", Invocation: "/side", Label: "Side chat", Description: "Start an ephemeral side conversation.", Group: "Conversation", Interaction: harness.CommandInsert, ArgumentHint: "optional request"},
+	{ID: "model", Invocation: "/model", Label: "Model", Description: "Choose the active model and reasoning effort.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "permissions", Invocation: "/permissions", Label: "Permissions", Description: "Adjust approval and sandbox permissions.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "personality", Invocation: "/personality", Label: "Personality", Description: "Choose the response communication style.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal, Availability: "conditional"},
+	{ID: "skills", Invocation: "/skills", Label: "Skills", Description: "Browse and select available skills.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "apps", Invocation: "/apps", Label: "Apps", Description: "Browse available app connectors.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal, Availability: "conditional"},
+	{ID: "plugins", Invocation: "/plugins", Label: "Plugins", Description: "Browse and manage Codex plugins.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal, Availability: "conditional"},
+	{ID: "hooks", Invocation: "/hooks", Label: "Hooks", Description: "Inspect and manage lifecycle hooks.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "mcp", Invocation: "/mcp", Label: "MCP servers", Description: "Inspect configured MCP servers and tools.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "agent", Invocation: "/agent", Label: "Agents", Description: "Switch the active agent thread.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal, Availability: "conditional"},
+	{ID: "experimental", Invocation: "/experimental", Label: "Experimental features", Description: "Inspect and toggle experimental features.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "memories", Invocation: "/memories", Label: "Memories", Description: "Configure memory use and generation.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal, Availability: "conditional"},
+	{ID: "keymap", Invocation: "/keymap", Label: "Keymap", Description: "Inspect and persist TUI shortcut bindings.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "statusline", Invocation: "/statusline", Label: "Status line", Description: "Configure terminal status-line fields.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "title", Invocation: "/title", Label: "Terminal title", Description: "Configure terminal window title fields.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "theme", Invocation: "/theme", Label: "Theme", Description: "Choose the Codex syntax-highlighting theme.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "pets", Invocation: "/pets", Label: "Terminal pet", Description: "Choose or hide a terminal pet.", Group: "Configure", Interaction: harness.CommandSubmitThenTerminal},
+	{ID: "clear", Invocation: "/clear", Label: "Clear Codex chat", Description: "Clear the terminal and start a fresh Codex chat.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
+	{ID: "new", Invocation: "/new", Label: "New Codex chat", Description: "Start a new chat inside this CLI session.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
+	{ID: "approve", Invocation: "/approve", Label: "Approve retry", Description: "Approve one retry of a recent automatic-review denial.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true, Availability: "conditional"},
+	{ID: "stop", Invocation: "/stop", Label: "Stop background terminals", Description: "Stop all background terminals owned by Codex.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
+	{ID: "archive", Invocation: "/archive", Label: "Archive and exit", Description: "Archive the current Codex session and exit.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
+	{ID: "delete", Invocation: "/delete", Label: "Delete and exit", Description: "Permanently delete the current Codex session.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
+	{ID: "logout", Invocation: "/logout", Label: "Log out", Description: "Remove Codex credentials from this machine.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
+	{ID: "exit", Invocation: "/exit", Label: "Exit Codex", Description: "Exit the Codex CLI.", Group: "Sensitive", Interaction: harness.CommandPrefillTerminal, Danger: true},
 }
 
 // OnIdle extracts a completed response from the rendered Codex screen. The

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,8 @@ var (
 	ErrUnsupportedAction   = errors.New("session: semantic action is not supported")
 	ErrApprovalPending     = errors.New("session: an approval decision is pending")
 	ErrHarnessNotReady     = errors.New("session: harness is not ready for prompt input")
+	ErrCommandUnsupported  = errors.New("session: harness command catalog is unavailable")
+	ErrCommandUnknown      = errors.New("session: unknown harness command")
 )
 
 // Status represents the lifecycle state of a session.
@@ -439,6 +442,92 @@ func (m *Manager) SubmitPrompt(id, text string) error {
 		},
 	})
 	return nil
+}
+
+// CommandCatalog returns the active parser's version-verified command catalog.
+func (m *Manager) CommandCatalog(id string) ([]harness.CommandDescriptor, error) {
+	m.mu.RLock()
+	s, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session: unknown session %q", id)
+	}
+	provider, ok := s.parser.(harness.CommandCatalogProvider)
+	if !ok {
+		return nil, ErrCommandUnsupported
+	}
+	return provider.CommandCatalog(), nil
+}
+
+// SubmitCommand invokes one catalog command without treating it as an agent prompt.
+func (m *Manager) SubmitCommand(id, commandID, arguments string) (harness.CommandDescriptor, error) {
+	m.mu.RLock()
+	s, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return harness.CommandDescriptor{}, fmt.Errorf("session: unknown session %q", id)
+	}
+	st := s.status()
+	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
+		return harness.CommandDescriptor{}, fmt.Errorf("session: session %q is %s", id, st)
+	}
+	s.mu.RLock()
+	pending := s.pendingAction != nil
+	semanticStatus := s.semanticStatus
+	s.mu.RUnlock()
+	if pending {
+		return harness.CommandDescriptor{}, ErrApprovalPending
+	}
+	if hasCapability(s.Capabilities, harness.CapabilitySemanticChat) && semanticStatus != "idle" {
+		return harness.CommandDescriptor{}, ErrHarnessNotReady
+	}
+	sequencer, ok := s.parser.(harness.CommandSequencer)
+	if !ok {
+		return harness.CommandDescriptor{}, ErrCommandUnsupported
+	}
+	parts, command, err := sequencer.CommandSequence(commandID, arguments)
+	if err != nil {
+		if strings.Contains(err.Error(), "unknown") {
+			return harness.CommandDescriptor{}, ErrCommandUnknown
+		}
+		return harness.CommandDescriptor{}, err
+	}
+	marksProcessing := command.Interaction != harness.CommandPrefillTerminal
+	if marksProcessing {
+		s.mu.Lock()
+		s.semanticStatus = "processing"
+		if s.semanticIdleTimer != nil {
+			s.semanticIdleTimer.Stop()
+		}
+		s.mu.Unlock()
+	}
+	s.inputMu.Lock()
+	for index, part := range parts {
+		if index > 0 {
+			time.Sleep(promptSubmitKeyDelay)
+		}
+		if _, err := s.runtime.Write(part); err != nil {
+			s.inputMu.Unlock()
+			if marksProcessing {
+				s.mu.Lock()
+				s.semanticStatus = "idle"
+				s.mu.Unlock()
+			}
+			return harness.CommandDescriptor{}, err
+		}
+	}
+	s.inputMu.Unlock()
+	if marksProcessing {
+		s.emitSemanticEvent(events.Event{
+			Type: events.TypeHarnessStatus,
+			Data: events.HarnessStatus{
+				Status:     "processing",
+				Detail:     s.AdapterName + " is handling " + command.Invocation + ".",
+				Confidence: 1,
+			},
+		})
+	}
+	return command, nil
 }
 
 // ExecuteAction runs an action only while its originating semantic event is pending.

@@ -44,7 +44,43 @@ const (
 	CapabilityResize            Capability = "resize"
 	CapabilityInterrupt         Capability = "interrupt"
 	CapabilityTerminate         Capability = "terminate"
+	CapabilityCommandCatalog    Capability = "command_catalog"
+	CapabilityCommandInvoke     Capability = "command_invoke"
 )
+
+// CommandInteraction tells clients how invoking a harness command affects the UI.
+type CommandInteraction string
+
+const (
+	CommandSubmit             CommandInteraction = "submit"
+	CommandSubmitThenTerminal CommandInteraction = "submit_then_terminal"
+	CommandPrefillTerminal    CommandInteraction = "prefill_terminal"
+	CommandInsert             CommandInteraction = "insert"
+)
+
+// CommandDescriptor is an adapter-owned, version-verified harness command.
+type CommandDescriptor struct {
+	ID               string             `json:"id"`
+	Invocation       string             `json:"invocation"`
+	Label            string             `json:"label"`
+	Description      string             `json:"description"`
+	Group            string             `json:"group"`
+	Interaction      CommandInteraction `json:"interaction"`
+	ArgumentHint     string             `json:"argument_hint,omitempty"`
+	Danger           bool               `json:"danger,omitempty"`
+	Availability     string             `json:"availability,omitempty"`
+	AvailabilityNote string             `json:"availability_note,omitempty"`
+}
+
+// CommandCatalogProvider exposes only commands verified for the active harness version.
+type CommandCatalogProvider interface {
+	CommandCatalog() []CommandDescriptor
+}
+
+// CommandSequencer maps a catalog command to ordered PTY writes.
+type CommandSequencer interface {
+	CommandSequence(commandID, arguments string) ([][]byte, CommandDescriptor, error)
+}
 
 // TerminalUpdate is the raw input offered to a session-scoped semantic parser.
 type TerminalUpdate struct {

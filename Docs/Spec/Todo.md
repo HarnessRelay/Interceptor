@@ -529,7 +529,8 @@ Goal: create a usable browser dashboard for Stage 1 validation.
 - [x] Allow switching Chat/Terminal views without restarting the session.
 - [x] Send Chat Mode composer submissions into the PTY.
 - [x] Render terminal output in readable transcript-style blocks.
-- [x] Add `/` slash-command action menu.
+- [x] Add searchable `/` command palette combining adapter-provided harness
+  commands with HarnessRelay actions.
 - [x] Keep force kill behind confirmation.
 - [x] Make event/debug output collapsible instead of dominant.
 - [x] Apply navy/teal HarnessRelay theme direction.

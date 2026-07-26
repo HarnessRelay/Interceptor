@@ -21,6 +21,7 @@ export function TerminalView({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const requestFitRef = useRef<() => void>(() => {});
   const latestSeq = useRef(0);
   const [rawInput, setRawInput] = useState("");
   const [connected, setConnected] = useState(false);
@@ -53,17 +54,8 @@ export function TerminalView({
     let acceptInput = session.status === "starting" || session.status === "running";
     let lastRows = 0;
     let lastCols = 0;
-    let lastHostWidth = 0;
-    let lastHostHeight = 0;
 
-    const sendResize = () => {
-      const host = hostRef.current;
-      if (!host) return;
-      const width = host.clientWidth;
-      const height = host.clientHeight;
-      if (Math.abs(width - lastHostWidth) < 1 && Math.abs(height - lastHostHeight) < 1) return;
-      lastHostWidth = width;
-      lastHostHeight = height;
+    const scheduleFit = () => {
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         if (disposed || !fitRef.current || !terminalRef.current) return;
@@ -75,9 +67,9 @@ export function TerminalView({
         api.resize(session.id, activeTerm.rows, activeTerm.cols).catch((err) => onError(err.message));
       }, 90);
     };
-
-    const resizeObserver = new ResizeObserver(sendResize);
-    resizeObserver.observe(hostRef.current);
+    requestFitRef.current = scheduleFit;
+    const onWindowResize = () => scheduleFit();
+    window.addEventListener("resize", onWindowResize);
 
     term.onData((data) => {
       if (!acceptInput) return;
@@ -96,6 +88,8 @@ export function TerminalView({
       .then((snapshot) => {
         writeSnapshot(snapshot);
         fit.fit();
+        lastRows = term.rows;
+        lastCols = term.cols;
         return api.resize(session.id, term.rows, term.cols);
       })
       .catch((err: Error) => onError(err.message))
@@ -127,17 +121,17 @@ export function TerminalView({
       });
 
     term.focus();
-    sendResize();
 
     return () => {
       disposed = true;
       acceptInput = false;
       window.clearTimeout(resizeTimer);
-      resizeObserver.disconnect();
+      window.removeEventListener("resize", onWindowResize);
       socket?.close();
       term.dispose();
       terminalRef.current = null;
       fitRef.current = null;
+      requestFitRef.current = () => {};
       setConnected(false);
     };
   }, [session.id, onError, onEvent, onSessionUpdate]);
@@ -163,7 +157,9 @@ export function TerminalView({
         <button className="quiet-button" onClick={onOpenChat}>Open Chat</button>
       </div>
       <div className="terminal-host" ref={hostRef} aria-label="Interactive terminal" />
-      <details className="raw-input-fallback">
+      <details className="raw-input-fallback" onToggle={() => {
+        window.requestAnimationFrame(() => requestFitRef.current());
+      }}>
         <summary>Raw input fallback</summary>
         <div className="raw-input">
           <label>

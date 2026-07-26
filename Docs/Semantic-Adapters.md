@@ -55,6 +55,9 @@ Optional behavior uses narrow interfaces:
   harness must process them separately
 - `ActionHandler`: maps a currently valid semantic action to PTY bytes
 - `ActionObserver`: clears parser state after an action or raw fallback input
+- `CommandCatalogProvider`: exposes version-verified harness commands
+- `CommandSequencer`: validates a catalog command and produces ordered PTY
+  writes without opening an agent turn
 
 The session manager attaches session IDs and sequences to parser events and
 publishes them on the existing event bus. Raw output is published first and is
@@ -79,8 +82,23 @@ Session responses expose `adapter_id`, `adapter_name`, and
 - `resize`
 - `interrupt`
 - `terminate`
+- `command_catalog`
+- `command_invoke`
 
 Capabilities describe implemented behavior. They are not permission grants.
+
+## Harness Commands
+
+`GET /api/v1/sessions/{id}/commands` returns the active adapter's normalized
+catalog. `POST /api/v1/sessions/{id}/commands/{command_id}` validates the
+catalog ID, readiness, and pending-approval state before writing through the
+adapter's current keyboard protocol.
+
+Command interaction modes tell the dashboard whether to remain in Chat Mode,
+switch to a native terminal picker, prefill a sensitive command without Enter,
+or insert an argument-bearing command into the composer. The Codex catalog is
+currently verified for `codex-cli 0.145.x`; unknown versions return an empty
+catalog and Terminal fallback rather than stale claims.
 
 ## Semantic Events
 
@@ -227,8 +245,9 @@ destructive actions, and supplement rather than replace fake tests.
   response, and model-footer conventions.
 - Extraction occurs after a three-second terminal quiet period rather than
   exposing token-level streaming.
-- Approve-once, persistent approval, command palette, and model changes are
-  intentionally unavailable.
+- Approve-once and persistent approval remain intentionally unavailable.
+- Model and other native pickers are launched from the unified palette but are
+  completed in Terminal Mode.
 - Semantic/event history remains in memory and is lost on daemon restart.
 - `codex app-server` is the preferred future structured source, but adopting it
   requires a separate session-ownership design.

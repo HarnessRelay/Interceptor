@@ -58,6 +58,8 @@ func (Adapter) Capabilities() []harness.Capability {
 		harness.CapabilityResize,
 		harness.CapabilityInterrupt,
 		harness.CapabilityTerminate,
+		harness.CapabilityCommandCatalog,
+		harness.CapabilityCommandInvoke,
 	}
 }
 

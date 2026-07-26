@@ -85,7 +85,9 @@ async function dashboardSmoke(input) {
     element.dispatchEvent(new Event("input", { bubbles: true }));
   };
   const clickText = (text, root = document) => {
-    const button = [...root.querySelectorAll("button")].find((item) => item.textContent.trim() === text);
+    const button = [...root.querySelectorAll("button")].find((item) =>
+      item.textContent.trim() === text || item.querySelector("strong")?.textContent.trim() === text
+    );
     if (!button) throw new Error("missing button " + text);
     button.click();
     return button;

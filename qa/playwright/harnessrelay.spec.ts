@@ -141,7 +141,7 @@ test("Screen 4: Chat Mode with simple shell", async ({ page }) => {
   await expect(errors).toEqual([]);
 });
 
-test("Screen 6: Slash Command Menu", async ({ page }) => {
+test("Screen 6: Unified Command Palette", async ({ page }) => {
   const errors = await consoleErrors(page);
   await login(page);
 
@@ -150,35 +150,35 @@ test("Screen 6: Slash Command Menu", async ({ page }) => {
   await page.locator(".slash-button").click();
   const menu = page.locator(".slash-menu");
   await expect(menu).toBeVisible();
-  await expect(menu).toHaveAttribute("role", "menu");
-  await expect(menu.getByRole("menuitem", { name: "Send Enter" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "Open Terminal" })).toBeVisible();
+  await expect(menu).toHaveAttribute("role", "dialog");
+  await expect(menu.getByRole("option", { name: /Send Enter/ })).toBeVisible();
+  await expect(menu.getByRole("option", { name: /Open Terminal/ })).toBeVisible();
   await page.screenshot({ path: `${screenshotDir}/07-slash-menu.png`, fullPage: true });
 
-  await menu.getByRole("menuitem", { name: "Refresh snapshot" }).click();
+  await menu.getByRole("option", { name: /Refresh snapshot/ }).click();
   await expect(menu).toBeHidden();
 
   for (const action of ["Send Escape", "Send Ctrl+C", "Send Enter"]) {
     await page.locator(".slash-button").click();
-    await page.locator(".slash-menu").getByRole("menuitem", { name: action }).click();
+    await page.locator(".slash-menu").getByRole("option", { name: action, exact: false }).click();
     await expect(page.locator(".slash-menu")).toBeHidden();
   }
 
   await page.locator(".slash-button").click();
-  await page.locator(".slash-menu").getByRole("menuitem", { name: "Open Terminal" }).click();
+  await page.locator(".slash-menu").getByRole("option", { name: /Open Terminal/ }).click();
   await expect(page.locator(".terminal-section")).toBeVisible();
   await page.getByRole("button", { name: "Open Chat" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
 
   await page.locator(".slash-button").click();
-  await page.locator(".slash-menu").getByRole("menuitem", { name: "Terminate session" }).click();
+  await page.locator(".slash-menu").getByRole("option", { name: /Terminate session/ }).click();
   const terminateDialog = page.getByRole("dialog", { name: "Terminate session?" });
   await expect(terminateDialog).toBeVisible();
   await terminateDialog.getByRole("button", { name: "Cancel" }).click();
   await expect(page.locator(".chat-view")).toBeVisible();
 
   await page.locator(".slash-button").click();
-  await page.locator(".slash-menu").getByRole("menuitem", { name: "Force kill…" }).click();
+  await page.locator(".slash-menu").getByRole("option", { name: /Force kill/ }).click();
   const killDialog = page.getByRole("dialog", { name: "Force kill session?" });
   await expect(killDialog).toBeVisible();
   await killDialog.getByRole("button", { name: "Cancel" }).click();
@@ -434,6 +434,23 @@ test("Semantic adapter: fake Codex remains coherent across chat, terminal, appro
   await expectNoChatGarbage(transcript);
   await expect(page.locator(".chat-status-row")).toContainText("Ready");
 
+  await page.locator(".slash-button").click();
+  const commandPalette = page.getByRole("dialog", { name: "Session command palette" });
+  await expect(commandPalette.getByRole("option", { name: /^Status Show model/ })).toBeVisible();
+  await page.screenshot({ path: `${screenshotDir}/07b-codex-command-palette.png`, fullPage: true });
+  await commandPalette.getByRole("combobox").fill("status");
+  await commandPalette.getByRole("option", { name: /^Status Show model/ }).click();
+  await waitForSnapshotText(page, sessionName, "RECEIVED:/status");
+  await expect(page.locator(".chat-view")).toBeVisible();
+
+  await page.locator(".slash-button").click();
+  await commandPalette.getByRole("combobox").fill("rename");
+  await commandPalette.getByRole("option", { name: /Rename chat/ }).click();
+  await expect(page.locator(".composer textarea")).toHaveValue("/rename ");
+  await page.locator(".composer textarea").fill(`/rename renamed-${unique}`);
+  await page.locator(".composer textarea").press("Enter");
+  await waitForSnapshotText(page, sessionName, `RECEIVED:/rename renamed-${unique}`);
+
   await sendChat(page, `semantic-send-${unique}`);
   await expect(transcript.locator(".message-user", { hasText: `semantic-send-${unique}` })).toBeVisible();
   await waitForSnapshotText(page, sessionName, `RECEIVED:semantic-send-${unique}`);
@@ -529,9 +546,9 @@ test("Accessibility QA: keyboard, labels, focus, and contrast", async ({ page })
 
   await page.locator(".slash-button").focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("menu", { name: "Session command menu" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Session command palette" })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("menu", { name: "Session command menu" })).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Session command palette" })).toBeHidden();
 
   const more = await openSessionMore(page);
   await more.getByRole("menuitem", { name: "Force kill…" }).click();
@@ -648,7 +665,12 @@ test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
 
   await page.getByRole("button", { name: "Interrupt" }).click();
   await page.waitForTimeout(500);
-  if (await page.locator(".session-header").getByText(/running|starting/).isVisible()) {
+  const lifecycleStatus = await page.evaluate(async (name) => {
+    const response = await fetch("/api/v1/sessions", { credentials: "same-origin" });
+    const data = await response.json() as { sessions: Array<{ name: string; status: string }> };
+    return data.sessions.find((candidate) => candidate.name === name)?.status || "";
+  }, sessionName);
+  if (lifecycleStatus === "running" || lifecycleStatus === "starting") {
     await terminateCurrentSession(page);
   } else {
     await expect(page.locator(".session-header")).toContainText(/exited|terminated/);

@@ -68,6 +68,51 @@ func TestParserPromptBytesTracksCurrentKeyboardProtocol(t *testing.T) {
 	}
 }
 
+func TestCommandCatalogIsVersionVerifiedAndUsesCurrentKeyboardProtocol(t *testing.T) {
+	parser := &Parser{}
+	if commands := parser.CommandCatalog(); len(commands) != 0 {
+		t.Fatalf("catalog before version detection = %v", commands)
+	}
+	parser.Process(harness.TerminalUpdate{
+		Chunk:    []byte("\x1b[>7uOpenAI Codex (v0.145.0)\r\n"),
+		Snapshot: []byte("OpenAI Codex (v0.145.0)\r\n"),
+	})
+	commands := parser.CommandCatalog()
+	if len(commands) < 20 {
+		t.Fatalf("catalog has %d commands, want a complete verified catalog", len(commands))
+	}
+	parts, command, err := parser.CommandSequence("status", "")
+	if err != nil {
+		t.Fatalf("CommandSequence(status): %v", err)
+	}
+	if command.Invocation != "/status" || len(parts) != 2 ||
+		!bytes.Equal(parts[0], []byte("/status")) || !bytes.Equal(parts[1], []byte(kittyEnter)) {
+		t.Fatalf("status sequence = %q, command = %+v", parts, command)
+	}
+	parts, command, err = parser.CommandSequence("delete", "")
+	if err != nil {
+		t.Fatalf("CommandSequence(delete): %v", err)
+	}
+	if !command.Danger || command.Interaction != harness.CommandPrefillTerminal ||
+		len(parts) != 1 || !bytes.Equal(parts[0], []byte("/delete")) {
+		t.Fatalf("delete sequence = %q, command = %+v", parts, command)
+	}
+	if _, _, err := parser.CommandSequence("missing", ""); err == nil {
+		t.Fatal("unknown command returned nil error")
+	}
+}
+
+func TestCommandCatalogRejectsUnknownCodexVersion(t *testing.T) {
+	parser := &Parser{}
+	parser.Process(harness.TerminalUpdate{
+		Chunk:    []byte("OpenAI Codex (v9.0.0)\r\n"),
+		Snapshot: []byte("OpenAI Codex (v9.0.0)\r\n"),
+	})
+	if commands := parser.CommandCatalog(); len(commands) != 0 {
+		t.Fatalf("unknown-version catalog = %v", commands)
+	}
+}
+
 func TestParserClassifiesCodexWithoutEmittingTerminalArtifacts(t *testing.T) {
 	parser := &Parser{}
 	raw := []byte("\x1b[>7u\x1b[2JOpenAI Codex (v0.145.0)\r\nmodel: gpt-test high\r\nMMMMMMMM\r\n┌──┐")

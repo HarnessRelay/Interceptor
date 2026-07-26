@@ -134,15 +134,17 @@ Testing requirements: click/Enter/Shift+Enter, disabled state, focus retention.
 
 ## Component: SlashCommandMenu
 
-Purpose: Expose session/chat actions without toolbar clutter.
-Props/data needed: available actions and disabled/destructive state.
-States: closed, open, focused item.
-Interactions: click, arrows, Home/End, Enter, Escape.
-Accessibility requirements: menu/menuitem roles, roving focus, trigger
-restoration.
-Visual notes: fixed/portal-like positioning above composer; section labels
-separate navigation, terminal keys, and lifecycle actions.
-Testing requirements: open/close, keyboard navigation, no clipping, actions.
+Purpose: Search and invoke harness commands and HarnessRelay controls without
+toolbar clutter.
+Props/data needed: adapter catalog, adapter name, local actions, loading state.
+States: closed, loading, open, filtered, empty, focused result.
+Interactions: slash trigger, search, arrows, Home/End, Enter, Escape.
+Accessibility requirements: dialog, combobox, and listbox semantics; active
+descendant; trigger restoration.
+Visual notes: 520–560px portal palette above the composer; labels,
+descriptions, syntax, and clear harness/HarnessRelay grouping.
+Testing requirements: open/close, filter, keyboard navigation, no clipping,
+command dispatch, action dispatch, and Terminal transition.
 
 ## Component: TerminalPanel
 
@@ -227,4 +229,3 @@ Interactions: click, Left/Right, Home/End.
 Accessibility requirements: tabs with `aria-selected` and tabpanel relation.
 Visual notes: compact two-segment workbench control.
 Testing requirements: keyboard and same-session preservation.
-

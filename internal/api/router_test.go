@@ -192,6 +192,22 @@ func TestCodexSessionPromptAndApprovalActionAPI(t *testing.T) {
 	waitForManagerSnapshotText(t, mgr, created.ID, "OpenAI Codex", 5*time.Second)
 	waitForBusHarnessStatus(t, bus, created.ID, "idle", 5*time.Second)
 
+	commandsRec := serveJSON(t, router, http.MethodGet, "/api/v1/sessions/"+created.ID+"/commands", nil)
+	if commandsRec.Code != http.StatusOK {
+		t.Fatalf("commands status = %d, body = %s", commandsRec.Code, commandsRec.Body.String())
+	}
+	var catalog commandsResponse
+	decodeBody(t, commandsRec, &catalog)
+	if !catalog.Supported || len(catalog.Commands) < 20 {
+		t.Fatalf("unexpected command catalog: %+v", catalog)
+	}
+	commandRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/commands/status", map[string]any{})
+	if commandRec.Code != http.StatusOK {
+		t.Fatalf("command status = %d, body = %s", commandRec.Code, commandRec.Body.String())
+	}
+	waitForManagerSnapshotText(t, mgr, created.ID, "RECEIVED:/status", 5*time.Second)
+	time.Sleep(3200 * time.Millisecond)
+
 	responseRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/prompt", map[string]any{
 		"text": "hello via API",
 	})

@@ -73,8 +73,8 @@ The dashboard supports:
 - xterm.js terminal fallback view
 - live WebSocket output
 - prompt composer that sends text into the PTY
-- keyboard-navigable slash/action menu for session actions, special keys,
-  snapshot refresh, inspector access, and Terminal Mode fallback
+- searchable command palette combining version-verified harness commands with
+  session actions, special keys, lifecycle controls, and Terminal fallback
 - keyboard input and paste in Terminal Mode
 - resize propagation
 - top-level interrupt plus terminate and force kill behind More and accessible
@@ -91,6 +91,11 @@ backend semantic status, metadata, user, assistant, system, and approval events.
 Codex assistant responses are reconstructed from a headless terminal screen
 after redraw activity settles; raw TUI chunks remain exclusively in Terminal
 Mode and never appear directly in the Chat transcript.
+
+For verified Codex versions, the command palette exposes the harness's own
+slash commands through the semantic adapter. Commands that open native pickers
+move into Terminal Mode; sensitive commands are prefilled without Enter so the
+user completes them in the source-of-truth TUI.
 
 Terminal Mode preserves the xterm.js raw terminal experience for exact TUI rendering, keyboard capture, paste, resize, and fallback control.
 

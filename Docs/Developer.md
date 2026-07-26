@@ -114,6 +114,12 @@ parser applies chunks to a session-scoped headless xterm screen, then emits the
 rendered response associated with the submitted prompt after output settles.
 Terminal Mode remains the source of truth for both paths.
 
+Semantic adapters may also expose a version-verified harness command catalog.
+The dashboard reads it from `GET /api/v1/sessions/{id}/commands` and invokes a
+validated entry with `POST /api/v1/sessions/{id}/commands/{command_id}`.
+Commands that need native pickers or sensitive confirmation hand control back
+to Terminal Mode; Generic sessions expose no catalog.
+
 Core adapter rules:
 
 - do not shape common API around one harness
