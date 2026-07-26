@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/harness/codex"
+	"github.com/harnessrelay/interceptor/internal/harness/fakesemantic"
 	"github.com/harnessrelay/interceptor/internal/harness/generic"
 	"github.com/harnessrelay/interceptor/internal/pty"
 )
@@ -101,17 +103,16 @@ type Session struct {
 	ExitedAt     *time.Time
 	ExitCode     *int
 
-	runtime                  *pty.Runtime
-	adapter                  harness.Adapter
-	parser                   harness.Parser
-	buf                      *outputBuffer
-	done                     chan struct{}
-	mu                       sync.RWMutex
-	inputMu                  sync.Mutex
-	heuristicApprovalEmitted bool
-	semanticStatus           string
-	semanticIdleTimer        *time.Timer
-	pendingAction            *pendingSemanticAction
+	runtime           *pty.Runtime
+	adapter           harness.Adapter
+	parser            harness.Parser
+	buf               *outputBuffer
+	done              chan struct{}
+	mu                sync.RWMutex
+	inputMu           sync.Mutex
+	semanticStatus    string
+	semanticIdleTimer *time.Timer
+	pendingAction     *pendingSemanticAction
 
 	publish func(typ events.Type, data any) events.Event
 }
@@ -218,6 +219,9 @@ func NewManagerWithRegistry(bus *events.Bus, registry *harness.Registry) *Manage
 }
 
 func defaultRegistry() *harness.Registry {
+	if os.Getenv("HARNESSRELAY_ENABLE_FAKE_ADAPTER") == "1" {
+		return generic.NewRegistry(codex.New(), fakesemantic.New())
+	}
 	return generic.NewRegistry(codex.New())
 }
 
@@ -558,40 +562,59 @@ func (m *Manager) ExecuteAction(id, eventID, actionID string) error {
 		s.mu.Unlock()
 		return ErrUnsupportedAction
 	}
-	data, ok := handler.ActionBytes(actionID)
+	result, ok := handler.ExecuteAction(actionID)
 	if !ok {
 		s.mu.Unlock()
 		return ErrUnsupportedAction
 	}
-	s.pendingAction = nil
-	s.semanticStatus = "processing"
+	if result.ClearsPending {
+		s.pendingAction = nil
+	}
+	status := result.Status
+	if status == "" {
+		status = "processing"
+	}
+	s.semanticStatus = status
 	if s.semanticIdleTimer != nil {
 		s.semanticIdleTimer.Stop()
 	}
 	s.mu.Unlock()
 
-	s.inputMu.Lock()
-	_, writeErr := s.runtime.Write(data)
-	s.inputMu.Unlock()
-	if writeErr != nil {
-		return writeErr
+	if len(result.TerminalInput) > 0 {
+		s.inputMu.Lock()
+		_, writeErr := s.runtime.Write(result.TerminalInput)
+		s.inputMu.Unlock()
+		if writeErr != nil {
+			return writeErr
+		}
 	}
 	if observer, ok := s.parser.(harness.ActionObserver); ok {
 		observer.ActionResolved(actionID)
+	}
+	resolution := result.Resolution
+	if resolution == "" {
+		resolution = "completed"
 	}
 	s.emitSemanticEvent(events.Event{
 		Type: events.TypeApprovalResolved,
 		Data: events.ApprovalResolved{
 			ApprovalEventID: eventID,
 			ActionID:        actionID,
-			Resolution:      "denied",
+			Resolution:      resolution,
 		},
 	})
+	for _, event := range result.Events {
+		s.emitSemanticEvent(event)
+	}
+	detail := result.Detail
+	if detail == "" {
+		detail = s.AdapterName + " completed the requested action."
+	}
 	s.emitSemanticEvent(events.Event{
 		Type: events.TypeHarnessStatus,
 		Data: events.HarnessStatus{
-			Status:     "processing",
-			Detail:     "Approval denied; Codex is returning to the conversation.",
+			Status:     status,
+			Detail:     detail,
 			Confidence: 0.95,
 		},
 	})
@@ -717,9 +740,6 @@ func (s *Session) readOutput() {
 				data := make([]byte, n)
 				copy(data, buf[:n])
 				s.publish(events.TypeTerminalOutput, events.TerminalOutput{Data: data})
-				if s.AdapterID == "generic" {
-					s.detectHeuristicEvents()
-				}
 			}
 			s.processAdapterOutput(buf[:n])
 		}
@@ -779,8 +799,7 @@ func (s *Session) emitSemanticEvent(event events.Event) events.Event {
 					actions[action.ID] = struct{}{}
 				}
 			}
-			terminalDecision := s.AdapterID == "codex" && approval.OperationKind == "workspace_trust"
-			if len(actions) > 0 || terminalDecision {
+			if len(actions) > 0 || approval.BlocksPrompt {
 				s.mu.Lock()
 				s.pendingAction = &pendingSemanticAction{eventID: published.ID, actions: actions}
 				if s.semanticIdleTimer != nil {
@@ -866,33 +885,6 @@ func hasCapability(capabilities []harness.Capability, wanted harness.Capability)
 		}
 	}
 	return false
-}
-
-func (s *Session) detectHeuristicEvents() {
-	s.mu.Lock()
-	if s.heuristicApprovalEmitted {
-		s.mu.Unlock()
-		return
-	}
-	s.mu.Unlock()
-
-	snapshot := string(s.Snapshot())
-	event, ok := generic.DetectApproval(snapshot, s.Command, s.WorkDir)
-	if !ok {
-		return
-	}
-
-	s.mu.Lock()
-	if s.heuristicApprovalEmitted {
-		s.mu.Unlock()
-		return
-	}
-	s.heuristicApprovalEmitted = true
-	s.mu.Unlock()
-
-	if s.publish != nil {
-		s.publish(event.Type, event.Data)
-	}
 }
 
 func (s *Session) wait() {

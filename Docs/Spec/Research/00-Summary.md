@@ -1,5 +1,18 @@
 # Phase 0 Research Summary
 
+## Universal Harness Follow-Up
+
+Cross-harness architecture work is documented in:
+
+- `10-Universal-Harness-Architecture.md`
+- `11-Cross-Harness-Capability-Research.md`
+- `12-Permission-Approval-Model.md`
+
+The PTY remains the universal source-of-truth base. Official structured
+interfaces such as Codex app-server, OpenCode OpenAPI/SSE, and Grok ACP or
+streaming JSON are adapter-specific higher layers that normalize into common
+events/actions without replacing Terminal Mode.
+
 ## Decisions
 
 Phase 0 validates a localhost-first Go daemon that owns terminal harnesses through Linux PTYs and exposes both raw terminal control and optional semantic actions to a web dashboard.

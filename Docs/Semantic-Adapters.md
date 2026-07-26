@@ -24,11 +24,16 @@ generic projection cannot know.
 evaluates each `Match` result and chooses the highest-priority match. Confidence
 breaks equal-priority ties.
 
-The default registry contains:
+The production registry contains:
 
 - `codex`, priority `100`, matching only an executable basename exactly equal
   to `codex`
 - `generic`, priority `-1000`, matching every launch as the mandatory fallback
+
+The `fake-semantic` QA adapter is registered only when
+`HARNESSRELAY_ENABLE_FAKE_ADAPTER=1`. It proves a third semantic adapter can
+provide metadata, commands, terminal-only decisions, and executable actions
+without frontend adapter branches.
 
 `codex-helper`, `mycodex`, and an argument containing `codex` do not select the
 Codex adapter.
@@ -53,7 +58,8 @@ Optional behavior uses narrow interfaces:
 - `PromptSubmitter`: creates one atomic prompt plus submit byte sequence
 - `PromptSequencer`: creates ordered text and submit-key PTY writes when the
   harness must process them separately
-- `ActionHandler`: maps a currently valid semantic action to PTY bytes
+- `ActionHandler`: returns an adapter-neutral result for a valid action,
+  including resolution, detail, optional PTY input, and optional events
 - `ActionObserver`: clears parser state after an action or raw fallback input
 - `CommandCatalogProvider`: exposes version-verified harness commands
 - `CommandSequencer`: validates a catalog command and produces ordered PTY
@@ -100,6 +106,10 @@ or insert an argument-bearing command into the composer. The Codex catalog is
 currently verified for `codex-cli 0.145.x`; unknown versions return an empty
 catalog and Terminal fallback rather than stale claims.
 
+The dashboard combines this catalog with common UI/session/terminal actions.
+Common actions are filtered by capabilities such as `special_keys`,
+`interrupt`, and `terminate`; adapter commands require no frontend edits.
+
 ## Semantic Events
 
 Adapters publish through the normal event envelope:
@@ -127,9 +137,10 @@ prompt.
 Generic provides raw terminal control, conservative Chat projection, carriage
 return prompt submission, special keys, resize, interrupt, and termination.
 
-Its approval-like text detection is heuristic. It exposes only
-`open_terminal`; it does not advertise approve or deny because a generic
-adapter cannot know the active terminal selection or key mapping.
+Its approval-like text detection emits typed `events.ApprovalRequired` with low
+confidence and `requires_terminal`. It exposes only `open_terminal`; it does
+not advertise approve or deny because a generic adapter cannot know the active
+terminal selection or key mapping.
 
 ## Codex Adapter
 
@@ -187,6 +198,11 @@ input instead of typing into the wrong TUI surface.
 Actions are backend-defined and frontend-rendered. Executable actions are bound
 to the current session, source event ID, action ID, and action version.
 
+Adapters return `ActionResult` with adapter-owned resolution/status/detail,
+optional terminal input, and optional semantic events. Common code does not
+assume denial or mention a harness by name. When detail is absent it emits the
+neutral fallback `"{adapter name} completed the requested action."`
+
 The server rejects:
 
 - unknown or cross-session event IDs
@@ -203,11 +219,10 @@ The Codex adapter exposes:
 It does not expose approve-once or persistent approval. No action is automatic.
 Force kill retains typed confirmation and termination retains confirmation.
 
-Codex may ask whether the current directory should be trusted before showing
-the main composer. The adapter detects this as `operation_kind:
-workspace_trust`, blocks Chat submission, and exposes only Open Terminal. The
-user must inspect and make that decision in Terminal Mode. HarnessRelay does not
-choose a trust level.
+Any adapter may set `blocks_prompt` and `requires_terminal` on an approval or
+permission request. Common state blocks prompts from these fields rather than
+adapter identity or operation kind. Codex workspace trust uses this mechanism
+and exposes only Open Terminal; HarnessRelay does not choose a trust level.
 
 ## Adding An Adapter
 
@@ -223,6 +238,9 @@ choose a trust level.
 9. Register the adapter without changing Generic fallback behavior.
 10. Add unit, fake PTY, API, browser, and safe real-harness validation.
 
+11. Verify Generic and another semantic adapter do not receive the new
+    adapter's labels, commands, or action resolution.
+
 ## Testing
 
 Deterministic coverage must include matching, capabilities, parser
@@ -233,6 +251,10 @@ isolation.
 The fake executable `testdata/fake-harnesses/codex` simulates keyboard protocol
 negotiation, metadata, `MMMMMMMM`, a full-screen frame, prompt submission,
 processing, a cursor-addressed assistant response, and an approval overlay.
+
+`testdata/fake-harnesses/fake-semantic` is the cross-adapter proof. It must
+remain non-Codex branded and its commands/actions must flow through the same
+registry, API, and frontend contracts.
 
 Real Codex tests must use a disposable `/tmp` repository, must not approve
 destructive actions, and supplement rather than replace fake tests.
@@ -255,3 +277,6 @@ destructive actions, and supplement rather than replace fake tests.
 Research details are in
 `Docs/Spec/Research/08-Semantic-Adapter-Architecture.md` and
 `Docs/Spec/Research/09-Codex-Adapter-Research.md`.
+Cross-harness architecture and permission research is in
+`Docs/Spec/Research/10-Universal-Harness-Architecture.md` through
+`Docs/Spec/Research/12-Permission-Approval-Model.md`.

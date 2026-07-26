@@ -172,7 +172,7 @@ export function ChatView({
     }
     if (event.type === "approval.required") {
       setActivity("approval");
-      setActivityDetail("Codex is waiting for an explicit decision.");
+      setActivityDetail(`${session.adapter_name || "The harness"} is waiting for an explicit decision.`);
     }
   }
 
@@ -273,7 +273,7 @@ export function ChatView({
     setActionState((current) => ({ ...current, [key]: "Submitting" }));
     try {
       await api.submitAction(session.id, event.id, action);
-      setActionState((current) => ({ ...current, [key]: "Denied" }));
+      setActionState((current) => ({ ...current, [key]: "Completed" }));
     } catch (err) {
       const message = (err as Error).message;
       setActionState((current) => ({ ...current, [key]: message }));
@@ -366,9 +366,9 @@ export function ChatView({
           <button className="quiet-button" onClick={onOpenTerminal}>Open Terminal</button>
         </div>
         {semanticAdapter && metadata && (
-          <div className="semantic-strip" aria-label="Codex metadata">
+          <div className="semantic-strip" aria-label={`${session.adapter_name || "Harness"} metadata`}>
             {metadata.model && <span>Model {metadata.model}</span>}
-            {metadata.version && <span>Codex {metadata.version}</span>}
+            {metadata.version && <span>{session.adapter_name || "Harness"} adapter · Version {metadata.version}</span>}
             {metadata.working_directory && <span title={metadata.working_directory}>{metadata.working_directory}</span>}
           </div>
         )}
@@ -378,7 +378,9 @@ export function ChatView({
             <section className="approval-card" key={event.id} aria-label="Approval required">
               <div>
                 <strong>Approval required</strong>
-                <p>{data.prompt || "Codex is waiting for a decision."}</p>
+                <p>{data.prompt || (data.requires_terminal
+                  ? "This harness needs terminal interaction. Open Terminal to continue."
+                  : `${session.adapter_name || "The harness"} is waiting for a decision.`)}</p>
                 {data.command && <code>$ {data.command}</code>}
                 {data.working_directory && <small>{data.working_directory}</small>}
               </div>
@@ -427,6 +429,7 @@ export function ChatView({
           <SlashCommandMenu
             open={slashOpen}
             harnessName={session.adapter_name || session.adapter_id}
+            capabilities={session.adapter_capabilities || []}
             harnessCommands={harnessCommands}
             catalogLoading={catalogLoading}
             onHarnessCommand={(command) => void invokeHarnessCommand(command)}

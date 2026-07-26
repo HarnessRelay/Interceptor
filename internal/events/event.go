@@ -140,14 +140,21 @@ type SemanticAction struct {
 	Version         int    `json:"version"`
 }
 
-// ApprovalRequired describes a high-confidence adapter approval prompt.
+// ApprovalRequired describes an adapter-derived approval or permission request.
 type ApprovalRequired struct {
 	OperationKind    string           `json:"operation_kind"`
+	OperationDetail  string           `json:"operation_detail,omitempty"`
 	Command          string           `json:"command,omitempty"`
+	FilePath         string           `json:"file_path,omitempty"`
+	ToolName         string           `json:"tool_name,omitempty"`
 	WorkingDirectory string           `json:"working_directory,omitempty"`
+	RiskLevel        string           `json:"risk_level,omitempty"`
+	AdapterSource    string           `json:"adapter_source,omitempty"`
 	Prompt           string           `json:"prompt"`
 	Actions          []SemanticAction `json:"actions"`
 	Confidence       float64          `json:"confidence"`
+	BlocksPrompt     bool             `json:"blocks_prompt,omitempty"`
+	RequiresTerminal bool             `json:"requires_terminal,omitempty"`
 }
 
 // ApprovalResolved records the terminal action used to resolve an approval.

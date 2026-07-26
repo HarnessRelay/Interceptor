@@ -108,6 +108,15 @@ func TestSessionRESTCreateListGetSnapshotAndEvents(t *testing.T) {
 	if created.Session.AdapterID != "generic" {
 		t.Fatalf("adapter = %q, want generic", created.Session.AdapterID)
 	}
+	commandsRec := serveJSON(t, router, http.MethodGet, "/api/v1/sessions/"+created.Session.ID+"/commands", nil)
+	if commandsRec.Code != http.StatusOK {
+		t.Fatalf("generic commands status = %d", commandsRec.Code)
+	}
+	var genericCatalog commandsResponse
+	decodeBody(t, commandsRec, &genericCatalog)
+	if genericCatalog.Supported || len(genericCatalog.Commands) != 0 || genericCatalog.Fallback != "terminal" {
+		t.Fatalf("generic command catalog = %+v", genericCatalog)
+	}
 
 	waitForStatus(t, router, created.Session.ID, session.StatusExited)
 
@@ -241,6 +250,70 @@ func TestCodexSessionPromptAndApprovalActionAPI(t *testing.T) {
 	waitForManagerSnapshotText(t, mgr, created.ID, "DENIED", 5*time.Second)
 
 	replayRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/actions/codex.approval_deny", map[string]any{
+		"event_id":       approval.ID,
+		"action_version": 1,
+	})
+	if replayRec.Code != http.StatusConflict {
+		t.Fatalf("replayed action status = %d, want %d", replayRec.Code, http.StatusConflict)
+	}
+}
+
+func TestFakeSemanticSessionUsesGenericAPIContracts(t *testing.T) {
+	t.Setenv("HARNESSRELAY_ENABLE_FAKE_ADAPTER", "1")
+	router, mgr, bus := newTestRouter()
+	created := createSession(t, router, map[string]any{
+		"name":    "semantic-third-adapter",
+		"command": fixturePath(t, "fake-semantic"),
+		"cwd":     t.TempDir(),
+	})
+	t.Cleanup(func() {
+		sess, ok := mgr.Get(created.ID)
+		if !ok || sess.Info().Status != session.StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, created.ID)
+	})
+
+	if created.AdapterID != "fake-semantic" || created.AdapterName != "Fake Semantic" {
+		t.Fatalf("adapter = %q/%q", created.AdapterID, created.AdapterName)
+	}
+	if slices.Contains(created.AdapterCapabilities, "codex") ||
+		!slices.Contains(created.AdapterCapabilities, "command_catalog") {
+		t.Fatalf("capabilities = %v", created.AdapterCapabilities)
+	}
+	waitForBusHarnessStatus(t, bus, created.ID, "idle", 5*time.Second)
+
+	commandsRec := serveJSON(t, router, http.MethodGet, "/api/v1/sessions/"+created.ID+"/commands", nil)
+	if commandsRec.Code != http.StatusOK {
+		t.Fatalf("commands status = %d, body = %s", commandsRec.Code, commandsRec.Body.String())
+	}
+	var catalog commandsResponse
+	decodeBody(t, commandsRec, &catalog)
+	if !catalog.Supported || len(catalog.Commands) != 1 || catalog.Commands[0].ID != "fake.status" {
+		t.Fatalf("catalog = %+v", catalog)
+	}
+
+	promptRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/prompt", map[string]any{"text": "request approval"})
+	if promptRec.Code != http.StatusOK {
+		t.Fatalf("prompt status = %d, body = %s", promptRec.Code, promptRec.Body.String())
+	}
+	approval := waitForBusEvent(t, bus, created.ID, events.TypeApprovalRequired, 5*time.Second)
+	actionRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/actions/fake.confirm", map[string]any{
+		"event_id":       approval.ID,
+		"action_version": 1,
+	})
+	if actionRec.Code != http.StatusOK {
+		t.Fatalf("action status = %d, body = %s", actionRec.Code, actionRec.Body.String())
+	}
+	waitForManagerSnapshotText(t, mgr, created.ID, "FAKE_ACTION_CONFIRMED", 5*time.Second)
+	resolved := waitForBusEvent(t, bus, created.ID, events.TypeApprovalResolved, 5*time.Second)
+	if got := resolved.Data.(events.ApprovalResolved).Resolution; got != "confirmed" {
+		t.Fatalf("resolution = %q", got)
+	}
+
+	replayRec := serveJSON(t, router, http.MethodPost, "/api/v1/sessions/"+created.ID+"/actions/fake.confirm", map[string]any{
 		"event_id":       approval.ID,
 		"action_version": 1,
 	})

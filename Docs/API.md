@@ -39,6 +39,8 @@ DELETE /sessions/{id}
 
 POST   /sessions/{id}/input
 POST   /sessions/{id}/prompt
+GET    /sessions/{id}/commands
+POST   /sessions/{id}/commands/{command_id}
 POST   /sessions/{id}/resize
 POST   /sessions/{id}/interrupt
 POST   /sessions/{id}/terminate
@@ -134,11 +136,11 @@ Snapshot returns recent raw replay chunks:
 ```
 
 Semantic actions validate the session, source event, advertised action,
-version, and current pending adapter state. The Codex adapter implements only
-`codex.approval_deny`; it sends Escape for the currently pending matching
-approval and emits `approval.resolved`. Replays, stale events, version
-mismatches, and unknown actions return `409`. A recognized action without an
-adapter executor returns `501`.
+version, and current pending adapter state. The adapter returns a normalized
+action result with resolution, status/detail, optional terminal input, and
+optional semantic events. Common code does not assume the action is a denial.
+Replays, stale events, version mismatches, and unknown actions return `409`. A
+recognized action without an adapter executor returns `501`.
 
 `open_terminal` is a UI action and is handled locally by the dashboard. It is
 never written to the PTY.
@@ -203,19 +205,23 @@ Assistant messages may include `message_id`. Multiple events with the same
 `message_id` are revisions of one semantic turn; clients replace the earlier
 content during live delivery and history replay.
 
-The generic adapter may emit `approval.required` when terminal text looks like
-an approval prompt. These events include `confidence: "heuristic"` and expose
-only `open_terminal`.
+The generic adapter may emit typed `approval.required` when terminal text looks
+like an approval prompt. These events use low numeric confidence, set
+`requires_terminal`, and expose only `open_terminal`.
 
 The Codex adapter emits a typed `approval.required` payload:
 
 ```json
 {
   "operation_kind": "shell_command",
+  "operation_detail": "A command execution needs review.",
   "command": "npm test",
   "working_directory": "/tmp/project",
+  "risk_level": "unknown",
+  "adapter_source": "codex",
   "prompt": "Codex is asking whether it may run this command.",
   "confidence": 0.95,
+  "blocks_prompt": true,
   "actions": [
     {
       "id": "codex.approval_deny",
@@ -236,3 +242,7 @@ The Codex adapter emits a typed `approval.required` payload:
 ```
 
 No approve or persistent-approval action is exposed.
+
+Permission/approval payloads may also include `file_path`, `tool_name`, and
+`requires_terminal`. Any adapter can emit a terminal-only blocking decision;
+the common manager never checks an adapter name or a specific operation kind.

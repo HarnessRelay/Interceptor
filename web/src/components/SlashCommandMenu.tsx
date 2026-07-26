@@ -9,20 +9,21 @@ type RelayAction = {
   group: string;
   danger?: boolean;
   shortcut?: string;
+  capability?: string;
 };
 
 const relayActions: RelayAction[] = [
-  { id: "terminal", label: "Open Terminal", description: "Use the complete live harness interface.", group: "HarnessRelay" },
-  { id: "inspector", label: "Show inspector", description: "Inspect raw semantic events and session state.", group: "HarnessRelay" },
-  { id: "snapshot", label: "Refresh snapshot", description: "Rebuild this transcript from current session history.", group: "HarnessRelay" },
-  { id: "clear", label: "Clear local transcript", description: "Clear only this browser's projected conversation.", group: "HarnessRelay" },
-  { id: "enter", label: "Send Enter", description: "Send an Enter key directly to the PTY.", group: "Terminal keys", shortcut: "↵" },
-  { id: "escape", label: "Send Escape", description: "Close the current terminal overlay or prompt.", group: "Terminal keys", shortcut: "Esc" },
-  { id: "tab", label: "Send Tab", description: "Send a Tab key directly to the PTY.", group: "Terminal keys", shortcut: "Tab" },
-  { id: "ctrlc", label: "Send Ctrl+C", description: "Send the terminal interrupt key.", group: "Terminal keys", shortcut: "Ctrl C" },
-  { id: "interrupt", label: "Interrupt", description: "Interrupt the foreground harness operation.", group: "Terminal keys" },
-  { id: "terminate", label: "Terminate session", description: "Ask the process group to stop gracefully.", group: "Lifecycle", danger: true },
-  { id: "kill", label: "Force kill…", description: "Immediately kill the harness process group.", group: "Lifecycle", danger: true }
+  { id: "terminal", label: "Open Terminal", description: "Use the complete live harness interface.", group: "Common UI actions" },
+  { id: "inspector", label: "Show inspector", description: "Inspect raw semantic events and session state.", group: "Debug and inspector" },
+  { id: "snapshot", label: "Refresh snapshot", description: "Rebuild this transcript from current session history.", group: "Session controls" },
+  { id: "clear", label: "Clear local transcript", description: "Clear only this browser's projected conversation.", group: "Common UI actions" },
+  { id: "enter", label: "Send Enter", description: "Send an Enter key directly to the PTY.", group: "Terminal controls", shortcut: "↵", capability: "special_keys" },
+  { id: "escape", label: "Send Escape", description: "Close the current terminal overlay or prompt.", group: "Terminal controls", shortcut: "Esc", capability: "special_keys" },
+  { id: "tab", label: "Send Tab", description: "Send a Tab key directly to the PTY.", group: "Terminal controls", shortcut: "Tab", capability: "special_keys" },
+  { id: "ctrlc", label: "Send Ctrl+C", description: "Send the terminal interrupt key.", group: "Terminal controls", shortcut: "Ctrl C", capability: "special_keys" },
+  { id: "interrupt", label: "Interrupt", description: "Interrupt the foreground harness operation.", group: "Session controls", capability: "interrupt" },
+  { id: "terminate", label: "Terminate session", description: "Ask the process group to stop gracefully.", group: "Session controls", danger: true, capability: "terminate" },
+  { id: "kill", label: "Force kill…", description: "Immediately kill the harness process group.", group: "Session controls", danger: true, capability: "terminate" }
 ];
 
 type PaletteItem =
@@ -32,6 +33,7 @@ type PaletteItem =
 export function SlashCommandMenu({
   open,
   harnessName,
+  capabilities,
   harnessCommands,
   catalogLoading,
   onHarnessCommand,
@@ -40,6 +42,7 @@ export function SlashCommandMenu({
 }: {
   open: boolean;
   harnessName: string;
+  capabilities: string[];
   harnessCommands: HarnessCommand[];
   catalogLoading: boolean;
   onHarnessCommand: (command: HarnessCommand) => void;
@@ -59,7 +62,7 @@ export function SlashCommandMenu({
         group: `${harnessName} · ${command.group}`,
         command
       })),
-      ...relayActions.map((action): PaletteItem => ({
+      ...relayActions.filter((action) => !action.capability || capabilities.includes(action.capability)).map((action): PaletteItem => ({
         kind: "relay",
         id: `relay:${action.id}`,
         group: action.group,
@@ -73,7 +76,7 @@ export function SlashCommandMenu({
         : `${item.action.label} ${item.action.description} ${item.action.group}`;
       return text.toLowerCase().includes(normalized);
     });
-  }, [harnessCommands, harnessName, query]);
+  }, [capabilities, harnessCommands, harnessName, query]);
 
   useEffect(() => {
     if (!open) return;

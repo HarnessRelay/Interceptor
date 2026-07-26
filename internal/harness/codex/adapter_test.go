@@ -279,13 +279,15 @@ func TestParserRoutesWorkspaceTrustDecisionToTerminal(t *testing.T) {
 	}
 }
 
-func TestActionBytesOnlySupportsVerifiedDeny(t *testing.T) {
+func TestActionResultOnlySupportsVerifiedDeny(t *testing.T) {
 	adapter := New()
-	if got, ok := adapter.ActionBytes("codex.approval_deny"); !ok || !bytes.Equal(got, []byte{0x1b}) {
-		t.Fatalf("deny bytes = %v, ok=%v", got, ok)
+	if got, ok := adapter.ExecuteAction("codex.approval_deny"); !ok || !bytes.Equal(got.TerminalInput, []byte{0x1b}) {
+		t.Fatalf("deny result = %+v, ok=%v", got, ok)
+	} else if got.Resolution != "denied" || got.Detail == "" || !got.ClearsPending {
+		t.Fatalf("deny result = %+v", got)
 	}
 	for _, action := range []string{"approve", "approve_always", "unknown"} {
-		if _, ok := adapter.ActionBytes(action); ok {
+		if _, ok := adapter.ExecuteAction(action); ok {
 			t.Fatalf("unsafe action %q was accepted", action)
 		}
 	}

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness/fakesemantic"
+	"github.com/harnessrelay/interceptor/internal/harness/generic"
 )
 
 func fixturePath(t *testing.T, name string) string {
@@ -247,14 +249,106 @@ func TestManagerPublishesGenericApprovalHeuristic(t *testing.T) {
 			if event.SessionID != sess.ID {
 				t.Fatalf("event session = %q, want %q", event.SessionID, sess.ID)
 			}
-			data := event.Data.(map[string]any)
-			if data["confidence"] != "heuristic" {
-				t.Fatalf("confidence = %v, want heuristic", data["confidence"])
+			data, ok := event.Data.(events.ApprovalRequired)
+			if !ok {
+				t.Fatalf("payload type = %T, want events.ApprovalRequired", event.Data)
+			}
+			if data.AdapterSource != "generic" || !data.RequiresTerminal || len(data.Actions) != 1 {
+				t.Fatalf("generic approval = %+v", data)
 			}
 			return
 		case <-deadline:
 			t.Fatal("timed out waiting for approval.required event")
 		}
+	}
+}
+
+func TestManagerFakeSemanticAdapterCommandsAndActionResult(t *testing.T) {
+	bus := events.NewBus()
+	registry := generic.NewRegistry(fakesemantic.New())
+	mgr := NewManagerWithRegistry(bus, registry)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: fixturePath(t, "fake-semantic"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	if info := sess.Info(); info.AdapterID != "fake-semantic" || !hasCapability(info.Capabilities, "semantic_chat") {
+		t.Fatalf("adapter info = %+v", info)
+	}
+	initialIdle := waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+	commands, err := mgr.CommandCatalog(sess.ID)
+	if err != nil || len(commands) != 1 || commands[0].ID != "fake.status" {
+		t.Fatalf("CommandCatalog = %+v, err=%v", commands, err)
+	}
+	output := sess.Subscribe()
+	if _, err := mgr.SubmitCommand(sess.ID, "fake.status", ""); err != nil {
+		t.Fatalf("SubmitCommand: %v", err)
+	}
+	readUntil(t, output, "FAKE_RESPONSE: fake status is ready", 5*time.Second)
+	waitForHarnessStatusAfter(t, bus, sess.ID, "idle", initialIdle.Sequence, 5*time.Second)
+
+	if err := mgr.SubmitPrompt(sess.ID, "request approval"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	approval := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalRequired, 5*time.Second)
+	data := approval.Data.(events.ApprovalRequired)
+	if data.AdapterSource != "fake-semantic" || !data.BlocksPrompt {
+		t.Fatalf("approval = %+v", data)
+	}
+	if err := mgr.ExecuteAction(sess.ID, approval.ID, "fake.confirm"); err != nil {
+		t.Fatalf("ExecuteAction: %v", err)
+	}
+	readUntil(t, output, "FAKE_ACTION_CONFIRMED", 5*time.Second)
+	resolved := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalResolved, 5*time.Second)
+	if got := resolved.Data.(events.ApprovalResolved).Resolution; got != "confirmed" {
+		t.Fatalf("resolution = %q, want confirmed", got)
+	}
+	status := waitForHarnessStatusAfter(t, bus, sess.ID, "processing", resolved.Sequence, 5*time.Second)
+	if detail := status.Data.(events.HarnessStatus).Detail; strings.Contains(detail, "Codex") || detail != "Fake Semantic completed its review." {
+		t.Fatalf("action status detail = %q", detail)
+	}
+	waitForHarnessStatusAfter(t, bus, sess.ID, "idle", status.Sequence, 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "request approval"); err != nil {
+		t.Fatalf("SubmitPrompt fallback action: %v", err)
+	}
+	fallbackApproval := waitForHistoryEventAfter(t, bus, sess.ID, events.TypeApprovalRequired, approval.Sequence, 5*time.Second)
+	if err := mgr.ExecuteAction(sess.ID, fallbackApproval.ID, "fake.silent"); err != nil {
+		t.Fatalf("ExecuteAction fallback: %v", err)
+	}
+	fallbackResolved := waitForHistoryEventAfter(t, bus, sess.ID, events.TypeApprovalResolved, resolved.Sequence, 5*time.Second)
+	fallbackStatus := waitForHarnessStatusAfter(t, bus, sess.ID, "processing", fallbackResolved.Sequence, 5*time.Second)
+	if detail := fallbackStatus.Data.(events.HarnessStatus).Detail; detail != "Fake Semantic completed the requested action." || strings.Contains(detail, "Codex") {
+		t.Fatalf("fallback action status detail = %q", detail)
+	}
+	waitForHarnessStatusAfter(t, bus, sess.ID, "idle", fallbackStatus.Sequence, 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "terminal decision"); err != nil {
+		t.Fatalf("SubmitPrompt terminal decision: %v", err)
+	}
+	terminalApproval := waitForHistoryEventAfter(t, bus, sess.ID, events.TypeApprovalRequired, fallbackApproval.Sequence, 5*time.Second)
+	terminalData := terminalApproval.Data.(events.ApprovalRequired)
+	if !terminalData.BlocksPrompt || !terminalData.RequiresTerminal || len(terminalData.Actions) != 1 {
+		t.Fatalf("terminal approval = %+v", terminalData)
+	}
+	if err := mgr.SubmitPrompt(sess.ID, "must remain blocked"); !errors.Is(err, ErrApprovalPending) {
+		t.Fatalf("SubmitPrompt while terminal decision pending = %v", err)
+	}
+	if err := mgr.Write(sess.ID, []byte("continue\r")); err != nil {
+		t.Fatalf("Write terminal decision: %v", err)
+	}
+	terminalResolved := waitForHistoryEventAfter(t, bus, sess.ID, events.TypeApprovalResolved, fallbackResolved.Sequence, 5*time.Second)
+	if got := terminalResolved.Data.(events.ApprovalResolved).Resolution; got != "handled_in_terminal" {
+		t.Fatalf("terminal resolution = %q", got)
 	}
 }
 
@@ -823,6 +917,21 @@ func waitForHistoryEvent(t *testing.T, bus *events.Bus, sessionID string, wanted
 	return events.Event{}
 }
 
+func waitForHistoryEventAfter(t *testing.T, bus *events.Bus, sessionID string, wanted events.Type, after uint64, timeout time.Duration) events.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, after, 1024) {
+			if event.Type == wanted {
+				return event
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q after sequence %d", wanted, after)
+	return events.Event{}
+}
+
 func waitForPendingAction(t *testing.T, sess *Session, eventID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -855,6 +964,25 @@ func waitForHarnessStatus(t *testing.T, bus *events.Bus, sessionID, wanted strin
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for harness status %q", wanted)
+	return events.Event{}
+}
+
+func waitForHarnessStatusAfter(t *testing.T, bus *events.Bus, sessionID, wanted string, after uint64, timeout time.Duration) events.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sessionID, after, 1024) {
+			if event.Type != events.TypeHarnessStatus {
+				continue
+			}
+			status, ok := event.Data.(events.HarnessStatus)
+			if ok && status.Status == wanted {
+				return event
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for harness status %q after sequence %d", wanted, after)
 	return events.Event{}
 }
 

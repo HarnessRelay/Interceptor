@@ -102,6 +102,32 @@ A supported harness may eventually expose clean actions such as â€œApprove onceâ
 
 The generic fallback is mandatory.
 
+## Universal Harness Guardrails
+
+HarnessRelay is a universal local harness relay, not a Codex-specific
+controller.
+
+The common architecture must remain harness-neutral. Common code may define
+session lifecycle, PTY control, event/action envelopes, approval/permission
+request models, capability vocabulary, command catalog transport, stale-action
+validation, and terminal fallback behavior.
+
+Harness-specific behavior belongs in adapters. This includes command matching,
+prompt byte sequences, TUI parsing, model/version extraction, approval prompt
+parsing, native command catalogs, and action execution.
+
+The frontend must compose common actions and adapter-provided commands
+dynamically from session capabilities, semantic events, and command catalogs.
+It must not hardcode one harness's commands or decision model.
+
+Codex, OpenCode, Grok, Claude Code, Kilo Code, and future harnesses must fit the
+same common contracts where possible. If a change requires harness-specific
+behavior in common code, stop and ask the project owner for explicit approval.
+
+Terminal Mode is mandatory and remains the source-of-truth fallback. No task
+may add automatic approval by default, weaken localhost-first security, remove
+raw terminal access, or add mobile-app scope without explicit owner approval.
+
 ## Out of Scope for Stage 1
 
 Do not implement or design the following unless explicitly approved:

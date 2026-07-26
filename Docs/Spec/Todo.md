@@ -786,6 +786,50 @@ Goal: verify that the interceptor + web dashboard is useful and stable enough to
 
 ---
 
+# Phase 16 — Universal Harness Architecture
+
+Goal: keep common behavior adapter-neutral and prove cross-harness extension.
+
+## 16.1 Research And Guardrails
+
+- [x] Document Codex, OpenCode, and Grok CLI/permission/structured surfaces.
+- [x] Answer the lowest sensible integration-level question.
+- [x] Add owner-approved universal harness guardrails to `Context.md`.
+- [x] Document common versus adapter-specific ownership.
+
+## 16.2 Common Contracts
+
+- [x] Replace common denial assumptions with adapter-neutral action results.
+- [x] Model terminal-only blocking without adapter-name checks.
+- [x] Convert Generic heuristic approvals to typed payloads.
+- [x] Preserve stale-action validation and no-auto-approval defaults.
+
+## 16.3 Dynamic Frontend
+
+- [x] Filter common slash actions by active session capabilities.
+- [x] Load native commands from the adapter command catalog.
+- [x] Remove Codex wording from Generic/common Chat and empty states.
+- [x] Keep Terminal Mode and inspector access available.
+
+## 16.4 Third Adapter Proof
+
+- [x] Add the explicitly enabled `fake-semantic` QA adapter.
+- [x] Validate fake metadata, capabilities, commands, actions, and fallback
+  wording through Go, API, and Playwright tests.
+- [x] Prove unsupported capability actions disappear without frontend adapter
+  branches.
+
+## 16.5 Cross-Harness Validation
+
+- [x] Validate Codex in `/tmp/harnessrelay-qa-codex`.
+- [x] Validate OpenCode in `/tmp/harnessrelay-qa-opencode`.
+- [x] Validate Grok Build in `/tmp/harnessrelay-qa-grok`.
+- [x] Validate Generic `/bin/bash`.
+- [x] Run full Go, build, Playwright, and dashboard smoke gates.
+- [x] Record results in `Docs/QA/Universal-Harness-QA.md`.
+
+---
+
 # New Task Template
 
 Use this template when adding new tasks.

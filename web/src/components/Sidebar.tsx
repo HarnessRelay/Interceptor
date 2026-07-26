@@ -296,7 +296,7 @@ function SessionList({
       <div className="session-list-state">
         <span className="empty-glyph" aria-hidden="true">⌁</span>
         <strong>No sessions yet</strong>
-        <p>Start Codex, a shell, or another local harness.</p>
+        <p>Start a detected coding harness or a shell.</p>
         <button type="button" onClick={onCreate}>Create your first session</button>
       </div>
     );

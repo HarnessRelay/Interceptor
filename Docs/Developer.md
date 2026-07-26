@@ -11,6 +11,7 @@
 - `internal/harness/generic`: mandatory raw terminal fallback adapter
 - `internal/harness/codex`: Codex detection, semantic parser, prompt submission,
   and safe deny action
+- `internal/harness/fakesemantic`: explicitly enabled QA-only third adapter
 - `internal/pty`: PTY process runtime
 - `internal/security`: local token auth, CSRF, and origin helpers
 - `internal/session`: session manager and bounded terminal output buffer
@@ -123,10 +124,20 @@ to Terminal Mode; Generic sessions expose no catalog.
 Core adapter rules:
 
 - do not shape common API around one harness
+- keep matching, byte sequences, native commands, TUI parsing, and permission
+  response mappings inside the adapter
+- keep lifecycle, PTY control, envelopes, stale validation, typed permission
+  context, and command transport in common code
 - keep generic adapter lowest priority and always available
 - mark heuristic events with confidence
 - never auto-approve actions
 - keep raw terminal visible and usable
+
+Common semantic actions return `harness.ActionResult`; the manager must not
+invent a denial resolution or harness-specific status detail. Terminal-only
+decisions use `blocks_prompt` and `requires_terminal`, not adapter-name checks.
+The slash palette filters common actions by capabilities and loads native
+commands from the command catalog API.
 
 The complete adapter contract, event vocabulary, action rules, and extension
 checklist are in `Docs/Semantic-Adapters.md`.
@@ -136,7 +147,16 @@ Adapter-focused checks:
 ```bash
 go test ./internal/harness/... ./internal/session ./internal/api
 npm --prefix web run qa -- --grep "Semantic adapter: fake Codex"
+npm --prefix web run qa -- --grep "Universal adapter"
 ```
+
+The fake third adapter is enabled only with:
+
+```bash
+HARNESSRELAY_ENABLE_FAKE_ADAPTER=1
+```
+
+Do not enable it in normal production startup.
 
 Real Codex validation belongs only in a disposable `/tmp` Git repository. Do
 not run approval research in a production repository and do not approve

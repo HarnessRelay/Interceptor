@@ -50,6 +50,10 @@ func (Adapter) Capabilities() []harness.Capability {
 	}
 }
 
+func (Adapter) NewParser() harness.Parser {
+	return &Parser{}
+}
+
 func (Adapter) PromptBytes(text string, _ []byte) []byte {
 	return append([]byte(text), '\r')
 }

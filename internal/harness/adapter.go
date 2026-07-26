@@ -119,9 +119,19 @@ type PromptSequencer interface {
 	PromptSequence(text string, terminalSnapshot []byte) [][]byte
 }
 
-// ActionHandler maps a currently valid semantic action to PTY input.
+// ActionResult describes the adapter-owned outcome of a semantic action.
+type ActionResult struct {
+	Resolution    string
+	Status        string
+	Detail        string
+	TerminalInput []byte
+	ClearsPending bool
+	Events        []events.Event
+}
+
+// ActionHandler executes a currently valid semantic action.
 type ActionHandler interface {
-	ActionBytes(actionID string) ([]byte, bool)
+	ExecuteAction(actionID string) (ActionResult, bool)
 }
 
 // ActionObserver lets a session-scoped parser discard state resolved outside

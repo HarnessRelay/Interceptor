@@ -58,7 +58,8 @@ test("Screen 2: Empty App Shell", async ({ page }) => {
   await expect(page.locator(".sidebar-header")).toContainText("HarnessRelay");
   await expect(page.locator(".new-session-button")).toBeVisible();
   await expect(page.locator(".session-list-state")).toContainText("No sessions yet");
-  await expect(page.locator(".empty-state")).toContainText(/Start a local harness|Loading your sessions/);
+  await expect(page.locator(".empty-state")).toContainText(/Start a detected coding harness|Loading your sessions/);
+  await expect(page.locator(".empty-state")).not.toContainText("Codex");
   await expect(page.locator(".event-panel")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Refresh sessions" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -153,6 +154,8 @@ test("Screen 6: Unified Command Palette", async ({ page }) => {
   await expect(menu).toHaveAttribute("role", "dialog");
   await expect(menu.getByRole("option", { name: /Send Enter/ })).toBeVisible();
   await expect(menu.getByRole("option", { name: /Open Terminal/ })).toBeVisible();
+  await expect(menu).not.toContainText("Codex");
+  await expect(menu.getByRole("option", { name: /^Status / })).toHaveCount(0);
   await page.screenshot({ path: `${screenshotDir}/07-slash-menu.png`, fullPage: true });
 
   await menu.getByRole("option", { name: /Refresh snapshot/ }).click();
@@ -405,6 +408,47 @@ test("QA-001: Chat Mode suppresses full-screen TUI redraw garbage", async ({ pag
   await expect(errors).toEqual([]);
 });
 
+test("Universal adapter: fake semantic commands, capabilities, metadata, and actions stay adapter-neutral", async ({ page }) => {
+  const errors = await consoleErrors(page);
+  await login(page);
+
+  const unique = Date.now();
+  const sessionName = `pw-fake-semantic-${unique}`;
+  const fakeSemantic = path.join(repoRoot, "testdata/fake-harnesses/fake-semantic");
+  await createSession(page, { name: sessionName, command: fakeSemantic, cwd: "/tmp", mode: "chat" });
+
+  await expect(page.locator(".session-header .adapter-badge")).toHaveText(/Fake Semantic/);
+  await expect(page.locator(".chat-status-row")).toContainText("Ready");
+  await expect(page.locator(".semantic-strip")).toContainText("Model fake-model");
+  await expect(page.locator(".semantic-strip")).toContainText("Fake Semantic adapter · Version 1.0.0");
+  await expect(page.locator(".chat-view")).not.toContainText("Codex");
+
+  await page.locator(".slash-button").click();
+  const menu = page.getByRole("dialog", { name: "Session command palette" });
+  await expect(menu.getByRole("option", { name: /Fake status/ })).toBeVisible();
+  await expect(menu.getByRole("option", { name: /Open Terminal/ })).toBeVisible();
+  await expect(menu.getByRole("option", { name: /Terminate session/ })).toBeVisible();
+  await expect(menu.getByRole("option", { name: /Send Enter/ })).toHaveCount(0);
+  await expect(menu.getByRole("option", { name: /^Interrupt / })).toHaveCount(0);
+  await expect(menu).not.toContainText("Codex");
+  await menu.getByRole("option", { name: /Fake status/ }).click();
+  await expect(page.locator(".message-assistant")).toContainText("fake status is ready");
+
+  await expect(page.locator(".chat-status-row")).toContainText("Ready");
+  await sendChat(page, "request approval");
+  const approval = page.locator(".approval-card");
+  await expect(approval).toContainText("Review the fake semantic operation.");
+  await expect(approval.getByRole("button", { name: "Confirm" })).toBeVisible();
+  await approval.getByRole("button", { name: "Confirm" }).click();
+  await waitForSnapshotText(page, sessionName, "FAKE_ACTION_CONFIRMED");
+  await expect(approval).toBeHidden();
+  await expect(page.locator(".chat-status-row")).toContainText("Fake Semantic completed its review.");
+  await expect(page.locator(".chat-view")).not.toContainText("Codex");
+
+  await terminateCurrentSession(page);
+  await expect(unexpectedErrors(errors)).toEqual([]);
+});
+
 test("Semantic adapter: fake Codex remains coherent across chat, terminal, approval, and reload", async ({ page }) => {
   const errors = await consoleErrors(page);
   await login(page);
@@ -429,7 +473,7 @@ test("Semantic adapter: fake Codex remains coherent across chat, terminal, appro
   const transcript = page.locator(".transcript");
   await expect(transcript).toContainText("Codex is running in a terminal interface");
   await expect(page.locator(".semantic-strip")).toContainText("gpt-fake high");
-  await expect(page.locator(".semantic-strip")).toContainText("Codex 0.145.0");
+  await expect(page.locator(".semantic-strip")).toContainText("Codex adapter · Version 0.145.0");
   await expect(transcript).not.toContainText("MMMMMMMM");
   await expectNoChatGarbage(transcript);
   await expect(page.locator(".chat-status-row")).toContainText("Ready");
@@ -605,6 +649,42 @@ test("Accessibility QA: keyboard, labels, focus, and contrast", async ({ page })
   await expect(errors).toEqual([]);
 });
 
+for (const harness of [
+  { command: "opencode", name: "OpenCode", cwd: "/tmp/harnessrelay-qa-opencode" },
+  { command: "grok", name: "Grok Build", cwd: "/tmp/harnessrelay-qa-grok" }
+]) {
+  test(`Cross-harness: ${harness.name} stays Generic with Terminal fallback`, async ({ page }) => {
+    test.setTimeout(45_000);
+    try {
+      execFileSync(harness.command, ["--version"], { stdio: "ignore" });
+    } catch {
+      test.skip(true, `${harness.command} is not installed`);
+    }
+
+    mkdirSync(harness.cwd, { recursive: true });
+    const errors = await consoleErrors(page);
+    await login(page);
+    const sessionName = `${harness.command}-qa-${Date.now()}`;
+    await createSession(page, { name: sessionName, command: harness.command, cwd: harness.cwd, mode: "terminal" });
+
+    await expect(page.locator(".session-header .adapter-badge")).toHaveText(/Generic/);
+    await expect(page.locator(".terminal-section")).toBeVisible();
+    await expect(page.locator(".xterm-rows")).toBeVisible();
+    await page.locator(".session-header").getByRole("tab", { name: "Chat" }).click();
+    await expect(page.locator(".chat-view")).toBeVisible();
+    await page.locator(".slash-button").click();
+    const menu = page.getByRole("dialog", { name: "Session command palette" });
+    await expect(menu).not.toContainText("Codex");
+    await expect(menu.getByRole("option", { name: /^Status / })).toHaveCount(0);
+    await menu.getByRole("option", { name: /Open Terminal/ }).click();
+    await expect(page.locator(".terminal-section")).toBeVisible();
+
+    await terminateCurrentSession(page);
+    await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
+    await expect(unexpectedErrors(errors)).toEqual([]);
+  });
+}
+
 test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
   test.setTimeout(90_000);
   try {
@@ -665,15 +745,32 @@ test("QA-001 Codex smoke in disposable directory", async ({ page }) => {
 
   await page.getByRole("button", { name: "Interrupt" }).click();
   await page.waitForTimeout(500);
-  const lifecycleStatus = await page.evaluate(async (name) => {
-    const response = await fetch("/api/v1/sessions", { credentials: "same-origin" });
-    const data = await response.json() as { sessions: Array<{ name: string; status: string }> };
-    return data.sessions.find((candidate) => candidate.name === name)?.status || "";
+  const cleanupStatus = await page.evaluate(async (name) => {
+    const data = await fetch("/api/v1/sessions", { credentials: "same-origin" }).then((response) => response.json()) as {
+      sessions: Array<{ id: string; name: string; status: string }>;
+    };
+    const session = data.sessions.find((candidate) => candidate.name === name);
+    if (!session || (session.status !== "running" && session.status !== "starting")) return 204;
+    const auth = await fetch("/api/v1/auth/status", { credentials: "same-origin" }).then((response) => response.json()) as {
+      csrf_token?: string;
+    };
+    const response = await fetch(`/api/v1/sessions/${session.id}/terminate`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": auth.csrf_token || ""
+      },
+      body: "{}"
+    });
+    return response.status;
   }, sessionName);
-  if (lifecycleStatus === "running" || lifecycleStatus === "starting") {
-    await terminateCurrentSession(page);
-  } else {
-    await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
-  }
+  expect([200, 204, 409]).toContain(cleanupStatus);
+  await expect.poll(async () => page.evaluate(async (name) => {
+    const data = await fetch("/api/v1/sessions", { credentials: "same-origin" }).then((response) => response.json()) as {
+      sessions: Array<{ name: string; status: string }>;
+    };
+    return data.sessions.find((candidate) => candidate.name === name)?.status || "";
+  }, sessionName)).toMatch(/exited|terminated/);
   await expect(errors).toEqual([]);
 });

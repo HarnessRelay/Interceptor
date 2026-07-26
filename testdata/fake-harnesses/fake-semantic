@@ -1,0 +1,21 @@
+#!/bin/sh
+printf 'FAKE_READY\r\n'
+while IFS= read -r line; do
+  case "$line" in
+    "request approval")
+      printf 'FAKE_APPROVAL\r\n'
+      ;;
+    "terminal decision")
+      printf 'FAKE_TERMINAL_DECISION\r\n'
+      ;;
+    "confirm")
+      printf 'FAKE_ACTION_CONFIRMED\r\n'
+      ;;
+    "/fake-status"*)
+      printf 'FAKE_RESPONSE: fake status is ready\r\n'
+      ;;
+    *)
+      printf 'FAKE_RESPONSE: %s\r\n' "$line"
+      ;;
+  esac
+done

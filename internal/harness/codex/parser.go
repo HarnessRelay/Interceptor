@@ -101,8 +101,11 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 					Data: events.ApprovalRequired{
 						OperationKind:    "workspace_trust",
 						WorkingDirectory: update.WorkDir,
+						AdapterSource:    adapterID,
 						Prompt:           "Codex is asking whether to trust this workspace. Review and decide in Terminal Mode.",
 						Confidence:       0.95,
+						BlocksPrompt:     true,
+						RequiresTerminal: true,
 						Actions: []events.SemanticAction{
 							{
 								ID:              "open_terminal",
@@ -137,8 +140,10 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 						OperationKind:    "shell_command",
 						Command:          command,
 						WorkingDirectory: update.WorkDir,
+						AdapterSource:    adapterID,
 						Prompt:           "Codex is asking whether it may run this command.",
 						Confidence:       0.95,
+						BlocksPrompt:     true,
 						Actions: []events.SemanticAction{
 							{
 								ID:              "codex.approval_deny",

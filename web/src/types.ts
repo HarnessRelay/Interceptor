@@ -53,6 +53,8 @@ export type SemanticEventData = {
   model?: string;
   version?: string;
   working_directory?: string;
+  requires_terminal?: boolean;
+  blocks_prompt?: boolean;
   operation_kind?: string;
   command?: string;
   prompt?: string;

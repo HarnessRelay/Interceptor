@@ -74,9 +74,15 @@ func (Adapter) PromptBytes(text string, terminalSnapshot []byte) []byte {
 	return append([]byte(text), '\r')
 }
 
-func (Adapter) ActionBytes(actionID string) ([]byte, bool) {
+func (Adapter) ExecuteAction(actionID string) (harness.ActionResult, bool) {
 	if actionID != "codex.approval_deny" {
-		return nil, false
+		return harness.ActionResult{}, false
 	}
-	return []byte{0x1b}, true
+	return harness.ActionResult{
+		Resolution:    "denied",
+		Status:        "processing",
+		Detail:        "Approval denied; Codex is returning to the conversation.",
+		TerminalInput: []byte{0x1b},
+		ClearsPending: true,
+	}, true
 }

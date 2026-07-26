@@ -19,7 +19,7 @@ export default defineConfig({
     viewport: { width: 1440, height: 960 }
   },
   webServer: {
-    command: "HARNESSRELAY_TOKEN=dashboard-token HARNESSRELAY_PORT=8767 ./bin/harnessd serve",
+    command: "HARNESSRELAY_TOKEN=dashboard-token HARNESSRELAY_PORT=8767 HARNESSRELAY_ENABLE_FAKE_ADAPTER=1 ./bin/harnessd serve",
     url: "http://127.0.0.1:8767/api/v1/health",
     reuseExistingServer: false,
     timeout: 20_000

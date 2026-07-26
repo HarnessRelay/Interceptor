@@ -4,7 +4,24 @@ import (
 	"strings"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness"
 )
+
+type Parser struct {
+	approvalEmitted bool
+}
+
+func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
+	if p.approvalEmitted {
+		return nil
+	}
+	event, ok := DetectApproval(string(update.Snapshot), update.Command, update.WorkDir)
+	if !ok {
+		return nil
+	}
+	p.approvalEmitted = true
+	return []events.Event{event}
+}
 
 func DetectApproval(text, command, cwd string) (events.Event, bool) {
 	lower := strings.ToLower(text)
@@ -13,23 +30,23 @@ func DetectApproval(text, command, cwd string) (events.Event, bool) {
 	}
 	return events.Event{
 		Type: events.TypeApprovalRequired,
-		Data: map[string]any{
-			"title":       "Approval-like prompt detected",
-			"summary":     "The generic adapter found text that looks like an approval prompt.",
-			"description": "Review the raw terminal before taking any action.",
-			"confidence":  "heuristic",
-			"context": map[string]any{
-				"command": command,
-				"cwd":     cwd,
-			},
-			"actions": []map[string]any{
+		Data: events.ApprovalRequired{
+			OperationKind:    "unknown",
+			OperationDetail:  "The generic adapter found text that looks like an approval prompt.",
+			Command:          command,
+			WorkingDirectory: cwd,
+			AdapterSource:    adapterID,
+			Prompt:           "Review the raw terminal before taking any action.",
+			Confidence:       0.35,
+			RequiresTerminal: true,
+			Actions: []events.SemanticAction{
 				{
-					"id":                "open_terminal",
-					"label":             "Open Terminal",
-					"kind":              "ui",
-					"style":             "secondary",
-					"requires_event_id": true,
-					"version":           1,
+					ID:              "open_terminal",
+					Label:           "Open Terminal",
+					Kind:            "ui",
+					Style:           "secondary",
+					RequiresEventID: true,
+					Version:         1,
 				},
 			},
 		},

@@ -14,13 +14,15 @@ func TestDetectApprovalHeuristic(t *testing.T) {
 	if event.Type != events.TypeApprovalRequired {
 		t.Fatalf("event type = %q, want approval.required", event.Type)
 	}
-	data := event.Data.(map[string]any)
-	if data["confidence"] != "heuristic" {
-		t.Fatalf("confidence = %v, want heuristic", data["confidence"])
+	data, ok := event.Data.(events.ApprovalRequired)
+	if !ok {
+		t.Fatalf("payload type = %T, want events.ApprovalRequired", event.Data)
 	}
-	actions := data["actions"].([]map[string]any)
-	if len(actions) != 1 || actions[0]["id"] != "open_terminal" {
-		t.Fatalf("actions = %+v", data["actions"])
+	if data.Confidence >= 0.5 || !data.RequiresTerminal || data.BlocksPrompt {
+		t.Fatalf("heuristic approval = %+v", data)
+	}
+	if len(data.Actions) != 1 || data.Actions[0].ID != "open_terminal" {
+		t.Fatalf("actions = %+v", data.Actions)
 	}
 }
 
