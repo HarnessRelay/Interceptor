@@ -412,7 +412,9 @@ func (m *Manager) Write(id string, data []byte) error {
 	if st == StatusExited || st == StatusFailed || st == StatusTerminated {
 		return fmt.Errorf("session: session %q is %s", id, st)
 	}
-	s.clearPendingForRawInput()
+	if isUserIntentInput(data) {
+		s.clearPendingForRawInput()
+	}
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	_, err := s.runtime.Write(data)
@@ -888,6 +890,33 @@ func (s *Session) clearPendingForRawInput() {
 			Resolution:      "handled_in_terminal",
 		})
 	}
+}
+
+// isUserIntentInput filters out terminal escape sequences that are not explicit
+// user intent, such as focus reporting (ESC [ I / ESC [ O), OSC sequences,
+// and mouse events, so that window blur/focus or TUI redraws do not resolve
+// pending semantic actions.
+func isUserIntentInput(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	// Focus reporting: ESC [ I  or  ESC [ O
+	if len(data) >= 3 && data[0] == '\x1b' && data[1] == '[' && (data[2] == 'I' || data[2] == 'O') {
+		return false
+	}
+	// OSC sequences: ESC ]
+	if len(data) >= 2 && data[0] == '\x1b' && data[1] == ']' {
+		return false
+	}
+	// DCS sequences: ESC P
+	if len(data) >= 2 && data[0] == '\x1b' && data[1] == 'P' {
+		return false
+	}
+	// Mouse tracking: ESC [ M ...
+	if len(data) >= 3 && data[0] == '\x1b' && data[1] == '[' && data[2] == 'M' {
+		return false
+	}
+	return true
 }
 
 func (s *Session) scheduleSemanticIdle() {

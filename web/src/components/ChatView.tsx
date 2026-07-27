@@ -53,6 +53,7 @@ export function ChatView({
   const activityTimer = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const approvalRef = useRef<Map<string, EventEnvelope>>(new Map());
   const semanticAdapter = session.adapter_capabilities?.includes("semantic_chat") ?? false;
   const canSend = isLive(session.status) && (!semanticAdapter || activity === "ready");
 
@@ -125,6 +126,20 @@ export function ChatView({
     }
   }, [messages]);
 
+  useEffect(() => {
+    events.forEach((event) => {
+      if (event.type === "approval.required") {
+        approvalRef.current.set(event.id, event);
+      }
+      if (event.type === "approval.resolved") {
+        const id = (event.data as SemanticEventData | undefined)?.approval_event_id;
+        if (id) {
+          approvalRef.current.delete(id);
+        }
+      }
+    });
+  }, [events]);
+
   const metadata = useMemo(() => {
     const event = events.find((item) => item.type === "harness.metadata");
     return event?.data as SemanticEventData | undefined;
@@ -159,7 +174,11 @@ export function ChatView({
         .map((event) => (event.data as SemanticEventData | undefined)?.approval_event_id)
         .filter(Boolean)
     );
-    return events.filter((event) => event.type === "approval.required" && !resolved.has(event.id)).slice(0, 2);
+    const fromEvents = events.filter((event) => event.type === "approval.required" && !resolved.has(event.id));
+    const fromRef = Array.from(approvalRef.current.values()).filter((event) => !resolved.has(event.id));
+    // Prefer live events, fall back to ref-persisted approvals if events were cleared.
+    const merged = fromEvents.length > 0 ? fromEvents : fromRef;
+    return merged.slice(0, 2);
   }, [events]);
 
   function appendSemanticEvent(event: EventEnvelope) {
