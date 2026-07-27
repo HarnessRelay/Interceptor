@@ -11,6 +11,7 @@ install:
 update:
 	./scripts/install.sh --update
 	harnessctl shims reshim
+	harnessctl shims doctor
 	harnessctl services restart
 
 uninstall:
