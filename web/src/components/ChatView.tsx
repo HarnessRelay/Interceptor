@@ -377,34 +377,37 @@ export function ChatView({
             This session was controlled from a terminal. Some terminal-entered prompts may only be visible in Terminal Mode.
           </aside>
         )}
-        {approvals.map((event) => {
-          const data = event.data as SemanticEventData;
-          return (
-            <section className="approval-card" key={event.id} aria-label="Approval required">
-              <div>
-                <strong>Approval required</strong>
-                <p>{data.prompt || (data.requires_terminal
-                  ? "This harness needs terminal interaction. Open Terminal to continue."
-                  : `${session.adapter_name || "The harness"} is waiting for a decision.`)}</p>
-                {data.command && <code>$ {data.command}</code>}
-                {data.working_directory && <small>{data.working_directory}</small>}
-              </div>
-              <div className="action-buttons">
-                {(data.actions || []).map((action) => (
-                  <button
-                    key={action.id}
-                    className={action.danger || action.style === "danger" ? "danger-button" : undefined}
-                    onClick={() => submitSemanticAction(event, action)}
-                  >
-                    {actionState[`${event.id}:${action.id}`] || action.label}
-                  </button>
-                ))}
-              </div>
-            </section>
-          );
-        })}
         <div className="transcript" ref={transcriptRef} role="log" aria-label="Session conversation" aria-live="polite">
           <div className="transcript-inner">
+          {approvals.map((event) => {
+            const data = event.data as SemanticEventData;
+            return (
+              <section className="approval-card" key={event.id} aria-label="Approval required">
+                <span className="system-icon" aria-hidden="true">◇</span>
+                <div className="approval-content">
+                  <div className="approval-header">
+                    <strong>Approval required</strong>
+                    <div className="action-buttons">
+                      {(data.actions || []).map((action) => (
+                        <button
+                          key={action.id}
+                          className={actionClassName(action)}
+                          onClick={() => submitSemanticAction(event, action)}
+                        >
+                          {actionState[`${event.id}:${action.id}`] || action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <p>{data.prompt || (data.requires_terminal
+                    ? "This harness needs terminal interaction. Open Terminal to continue."
+                    : `${session.adapter_name || "The harness"} is waiting for a decision.`)}</p>
+                  {data.command && <code>$ {data.command}</code>}
+                  {data.working_directory && <small>{data.working_directory}</small>}
+                </div>
+              </section>
+            );
+          })}
           {messages.length === 0 ? (
             <div className="message system-message">
               <span className="system-icon" aria-hidden="true">◇</span>
@@ -502,6 +505,12 @@ function snapshotMessages(projection: ReturnType<typeof projectTerminalOutputFor
 
 function activityClassName(activity: ActivityState): string {
   return `stream-state activity-${activity} ${activity === "ready" || activity === "streaming" ? "is-connected" : ""}`.trim();
+}
+
+function actionClassName(action: SemanticAction): string | undefined {
+  if (action.danger || action.style === "danger") return "danger-button";
+  if (action.style === "primary") return "primary-button";
+  return undefined;
 }
 
 function activityLabel(activity: ActivityState): string {

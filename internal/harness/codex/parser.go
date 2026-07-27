@@ -13,13 +13,14 @@ import (
 )
 
 var (
-	csiPattern      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
-	oscPattern      = regexp.MustCompile(`\x1b\][^\x07]*(?:\x07|\x1b\\)`)
-	modelPattern    = regexp.MustCompile(`(?i)model:\s*([a-z0-9][a-z0-9._+-]*(?:\s+(?:low|medium|high|xhigh|max|ultra))?)`)
-	footerModel     = regexp.MustCompile(`(?m)^\s*([a-z0-9][a-z0-9._+-]*(?:\s+(?:low|medium|high|xhigh|max|ultra))?)\s+·\s+`)
-	versionPattern  = regexp.MustCompile(`OpenAI Codex\s*\(v([^)]+)\)`)
-	commandPattern  = regexp.MustCompile(`(?m)^\$\s+([^\r\n]+)`)
-	keyboardPattern = regexp.MustCompile(`\x1b\[([><=])([0-9]*)u`)
+	csiPattern              = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	oscPattern              = regexp.MustCompile(`\x1b\][^\x07]*(?:\x07|\x1b\\)`)
+	modelPattern            = regexp.MustCompile(`(?i)model:\s*([a-z0-9][a-z0-9._+-]*(?:\s+(?:low|medium|high|xhigh|max|ultra))?)`)
+	footerModel             = regexp.MustCompile(`(?m)^\s*([a-z0-9][a-z0-9._+-]*(?:\s+(?:low|medium|high|xhigh|max|ultra))?)\s+·\s+`)
+	versionPattern          = regexp.MustCompile(`OpenAI Codex\s*\(v([^)]+)\)`)
+	commandPattern          = regexp.MustCompile(`(?m)^\s*\$\s*([^\r\n]+)`)
+	collapsedCommandPattern = regexp.MustCompile(`\$\s*(.+?)(?:\s*1\.\s*Yes|\s*2\.\s*Yes|\s*3\.\s*No|Press enter to confirm|$)`)
+	keyboardPattern         = regexp.MustCompile(`\x1b\[([><=])([0-9]*)u`)
 )
 
 // Parser keeps duplicate-suppression state for one Codex session.
@@ -91,7 +92,8 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 		out = append(out, events.Event{Type: events.TypeHarnessMetadata, Data: metadata})
 	}
 
-	if strings.Contains(p.recent, "Do you trust the contents of this directory?") {
+	approvalText := p.approvalText(snapshot)
+	if strings.Contains(approvalText, "Do you trust the contents of this directory?") {
 		if !p.announcedTrust {
 			p.announcedTrust = true
 			out = append(out,
@@ -123,8 +125,8 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 		return compactEvents(out)
 	}
 
-	if strings.Contains(p.recent, "Would you like to run the following command?") {
-		command := parseCommand(p.recent)
+	if strings.Contains(approvalText, "Would you like to run the following command?") {
+		command := parseCommand(approvalText)
 		// Codex redraws the heading before the command line. Waiting here keeps
 		// the first event-bound approval card from losing its review context.
 		if command == "" {
@@ -145,6 +147,14 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 						Confidence:       0.95,
 						BlocksPrompt:     true,
 						Actions: []events.SemanticAction{
+							{
+								ID:              "codex.approval_allow",
+								Label:           "Approve",
+								Kind:            "approval",
+								Style:           "primary",
+								RequiresEventID: true,
+								Version:         1,
+							},
 							{
 								ID:              "codex.approval_deny",
 								Label:           "Deny",
@@ -401,6 +411,17 @@ func (p *Parser) status(status, detail string, confidence float64) events.Event 
 	}
 }
 
+func (p *Parser) approvalText(snapshot string) string {
+	text := p.recent
+	if snapshot != "" {
+		text += "\n" + snapshot
+	}
+	if p.screen != nil {
+		text += "\n" + p.screen.String()
+	}
+	return text
+}
+
 func parseMetadata(text, fallbackWorkDir string) (events.HarnessMetadata, bool) {
 	metadata := events.HarnessMetadata{WorkDir: fallbackWorkDir, Confidence: 0.8}
 	if match := versionPattern.FindStringSubmatch(text); len(match) == 2 {
@@ -425,10 +446,13 @@ func parseMetadata(text, fallbackWorkDir string) (events.HarnessMetadata, bool) 
 
 func parseCommand(text string) string {
 	matches := commandPattern.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 {
-		return ""
+	if len(matches) > 0 {
+		return strings.TrimSpace(matches[len(matches)-1][1])
 	}
-	return strings.TrimSpace(matches[len(matches)-1][1])
+	if match := collapsedCommandPattern.FindStringSubmatch(text); len(match) == 2 {
+		return strings.TrimSpace(match[1])
+	}
+	return ""
 }
 
 func cleanTerminalText(value string) string {

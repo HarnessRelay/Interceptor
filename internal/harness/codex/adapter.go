@@ -75,14 +75,24 @@ func (Adapter) PromptBytes(text string, terminalSnapshot []byte) []byte {
 }
 
 func (Adapter) ExecuteAction(actionID string) (harness.ActionResult, bool) {
-	if actionID != "codex.approval_deny" {
+	switch actionID {
+	case "codex.approval_allow":
+		return harness.ActionResult{
+			Resolution:    "approved",
+			Status:        "processing",
+			Detail:        "Approval granted; Codex is running the command.",
+			TerminalInput: []byte("y"),
+			ClearsPending: true,
+		}, true
+	case "codex.approval_deny":
+		return harness.ActionResult{
+			Resolution:    "denied",
+			Status:        "processing",
+			Detail:        "Approval denied; Codex is returning to the conversation.",
+			TerminalInput: []byte{0x1b},
+			ClearsPending: true,
+		}, true
+	default:
 		return harness.ActionResult{}, false
 	}
-	return harness.ActionResult{
-		Resolution:    "denied",
-		Status:        "processing",
-		Detail:        "Approval denied; Codex is returning to the conversation.",
-		TerminalInput: []byte{0x1b},
-		ClearsPending: true,
-	}, true
 }

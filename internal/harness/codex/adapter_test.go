@@ -232,7 +232,7 @@ func TestParserDetectsApprovalOnceAndAllowsLaterIdenticalRequest(t *testing.T) {
 	if data.Command != "printf safe" || data.WorkingDirectory != "/tmp/project" {
 		t.Fatalf("approval data = %+v", data)
 	}
-	if len(data.Actions) != 2 || data.Actions[0].ID != "codex.approval_deny" || data.Actions[1].ID != "open_terminal" {
+	if len(data.Actions) != 3 || data.Actions[0].ID != "codex.approval_allow" || data.Actions[1].ID != "codex.approval_deny" || data.Actions[2].ID != "open_terminal" {
 		t.Fatalf("approval actions = %+v", data.Actions)
 	}
 	if got := parser.Process(update); eventCount(got, events.TypeApprovalRequired) != 0 {
@@ -242,6 +242,99 @@ func TestParserDetectsApprovalOnceAndAllowsLaterIdenticalRequest(t *testing.T) {
 	parser.ActionResolved("codex.approval_deny")
 	if got := parser.Process(update); eventCount(got, events.TypeApprovalRequired) != 1 {
 		t.Fatalf("identical later request did not emit once: %+v", got)
+	}
+}
+
+func TestParserDetectsCodex0145ApprovalPrompt(t *testing.T) {
+	for _, commandLine := range []string{"$ touch example.txt", "  $ touch example.txt"} {
+		t.Run(commandLine, func(t *testing.T) {
+			parser := &Parser{}
+			overlay := []byte("Would you like to run the following command?\r\n\r\n" +
+				"Environment: local\r\n\r\n" +
+				"Reason: Do you want to allow creating example.txt in the workspace using the harness permission system?\r\n\r\n" +
+				commandLine + "\r\n\r\n" +
+				"1. Yes, proceed (y)\r\n" +
+				"2. Yes, and don't ask again for commands that start with `touch example.txt` (p)\r\n" +
+				"3. No, and tell Codex what to do differently (esc)")
+			update := harness.TerminalUpdate{Chunk: overlay, Snapshot: overlay, WorkDir: "/tmp/project"}
+
+			approval := eventOfType(t, parser.Process(update), events.TypeApprovalRequired).Data.(events.ApprovalRequired)
+			if approval.OperationKind != "shell_command" || approval.Command != "touch example.txt" {
+				t.Fatalf("approval data = %+v", approval)
+			}
+			if len(approval.Actions) != 3 || approval.Actions[0].ID != "codex.approval_allow" || approval.Actions[1].ID != "codex.approval_deny" || approval.Actions[2].ID != "open_terminal" {
+				t.Fatalf("approval actions = %+v", approval.Actions)
+			}
+			if got := parser.Process(update); eventCount(got, events.TypeApprovalRequired) != 0 {
+				t.Fatalf("duplicate update emitted approval: %+v", got)
+			}
+		})
+	}
+}
+
+func TestParserDetectsApprovalFromRenderedScreen(t *testing.T) {
+	parser := &Parser{}
+	frame := []byte(
+		"\x1b[2J" +
+			"\x1b[4;5HWould you like to run the following command?\x1b[K" +
+			"\x1b[6;5HEnvironment: local\x1b[K" +
+			"\x1b[8;5HReason: Do you want to allow creating example.txt in the workspace using the harness permission system?\x1b[K" +
+			"\x1b[10;7H$ touch example.txt\x1b[K" +
+			"\x1b[12;5H1. Yes, proceed (y)\x1b[K" +
+			"\x1b[13;5H2. Yes, and don't ask again for commands that start with `touch example.txt` (p)\x1b[K" +
+			"\x1b[14;5H3. No, and tell Codex what to do differently (esc)\x1b[K",
+	)
+
+	approval := eventOfType(t, parser.Process(harness.TerminalUpdate{
+		Chunk:   frame,
+		Rows:    24,
+		Cols:    120,
+		WorkDir: "/tmp/project",
+	}), events.TypeApprovalRequired).Data.(events.ApprovalRequired)
+	if approval.Command != "touch example.txt" {
+		t.Fatalf("approval command = %q", approval.Command)
+	}
+}
+
+func TestParserDetectsCapturedCodexApprovalPane(t *testing.T) {
+	parser := &Parser{}
+	pane := []byte("• Running rtk printf 'example\\n' | rtk tee example.txt\n\n" +
+		"  Would you like to run the following command?\n\n" +
+		"  Environment: local\n\n" +
+		"  Reason: Do you want to allow me to create /home/nethunranasingha/MyData/Projects/GO/HarnessRelay/Interceptor/example.txt with simple\n" +
+		"  example text?\n\n" +
+		"  $ rtk printf 'example\\n' | rtk tee example.txt\n\n" +
+		"› 1. Yes, proceed (y)\n" +
+		"  2. Yes, and don't ask again for commands that start with `rtk printf \"example\\\\n\"` (p)\n" +
+		"  3. No, and tell Codex what to do differently (esc)\n\n" +
+		"  Press enter to confirm or esc to cancel")
+
+	approval := eventOfType(t, parser.Process(harness.TerminalUpdate{
+		Chunk:   pane,
+		WorkDir: "/tmp/project",
+	}), events.TypeApprovalRequired).Data.(events.ApprovalRequired)
+	if approval.Command != "rtk printf 'example\\n' | rtk tee example.txt" {
+		t.Fatalf("approval command = %q", approval.Command)
+	}
+}
+
+func TestParserDetectsCollapsedPTYApprovalPrompt(t *testing.T) {
+	parser := &Parser{}
+	cleaned := []byte("Runningprintf 'This is a simple example file.\\n' > example.txt" +
+		"Would you like to run the following command?" +
+		"Environment:local" +
+		"Reason:Do you want to allow me to create example.txt in the project workspace?" +
+		"$printf 'This is a simple example file.\\n' > example.txt 1. Yes, proceed (y)" +
+		"2.Yes,anddon'taskagainforcommandsthatstartwith`printf'Thisisasimpleexamplefile.\\n'>example.txt`(p)" +
+		"3.No,andtellCodexwhattododifferently(esc)" +
+		"Press enter to confirm or esc to cancel")
+
+	approval := eventOfType(t, parser.Process(harness.TerminalUpdate{
+		Chunk:   cleaned,
+		WorkDir: "/tmp/project",
+	}), events.TypeApprovalRequired).Data.(events.ApprovalRequired)
+	if approval.Command != "printf 'This is a simple example file.\\n' > example.txt" {
+		t.Fatalf("approval command = %q", approval.Command)
 	}
 }
 
@@ -279,8 +372,13 @@ func TestParserRoutesWorkspaceTrustDecisionToTerminal(t *testing.T) {
 	}
 }
 
-func TestActionResultOnlySupportsVerifiedDeny(t *testing.T) {
+func TestActionResultOnlySupportsVerifiedApprovalActions(t *testing.T) {
 	adapter := New()
+	if got, ok := adapter.ExecuteAction("codex.approval_allow"); !ok || !bytes.Equal(got.TerminalInput, []byte("y")) {
+		t.Fatalf("allow result = %+v, ok=%v", got, ok)
+	} else if got.Resolution != "approved" || got.Detail == "" || !got.ClearsPending {
+		t.Fatalf("allow result = %+v", got)
+	}
 	if got, ok := adapter.ExecuteAction("codex.approval_deny"); !ok || !bytes.Equal(got.TerminalInput, []byte{0x1b}) {
 		t.Fatalf("deny result = %+v, ok=%v", got, ok)
 	} else if got.Resolution != "denied" || got.Detail == "" || !got.ClearsPending {

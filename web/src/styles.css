@@ -1166,20 +1166,35 @@ kbd {
 
 .approval-card {
   display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-surface));
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-secondary);
+}
+
+.approval-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.approval-header {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-5);
-  width: min(var(--chat-rail), 100%);
-  margin: var(--space-4) auto 0;
-  border: 1px solid #6d612b;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-warning);
-  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.approval-card strong {
+  color: var(--color-text-primary);
 }
 
 .approval-card p {
-  margin: 5px 0;
-  color: #d8d0aa;
+  max-width: 58ch;
+  margin: 4px 0 0;
+  line-height: 1.5;
 }
 
 .approval-card code,
@@ -1188,15 +1203,34 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+.approval-card code {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: var(--space-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-canvas) 75%, transparent);
+  padding: 5px 7px;
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+}
+
 .approval-card small {
   margin-top: 4px;
-  color: #b6ae89;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
 }
 
 .action-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.approval-card .action-buttons button {
+  min-height: 30px;
+  padding: 0 var(--space-3);
 }
 
 .transcript {
