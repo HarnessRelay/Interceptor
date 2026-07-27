@@ -10,6 +10,8 @@ install:
 
 update:
 	./scripts/install.sh --update
+	harnessctl shims reshim
+	harnessctl services restart
 
 uninstall:
 	./scripts/uninstall.sh
