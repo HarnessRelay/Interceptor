@@ -6,3 +6,5 @@ tmp/
 web/node_modules/
 .playwright-mcp/
 *.png
+.kilo
+.kilo/**

@@ -48,6 +48,7 @@ export function ChatView({
   const [actionState, setActionState] = useState<Record<string, string>>({});
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [terminalNotice, setTerminalNotice] = useState<string | null>(null);
   const latestSeq = useRef(0);
   const activityTimer = useRef<number | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -165,6 +166,13 @@ export function ChatView({
     if (event.type === "harness.status") {
       applyStatus(event);
       return;
+    }
+    if (event.type === "chat.system_message") {
+      const data = event.data as SemanticEventData | undefined;
+      if (data?.source === "codex" && data.content?.includes("Codex is running in a terminal interface")) {
+        setTerminalNotice(data.content);
+        return;
+      }
     }
     const next = semanticMessage(event);
     if (next) {
@@ -372,6 +380,11 @@ export function ChatView({
             {metadata.working_directory && <span title={metadata.working_directory}>{metadata.working_directory}</span>}
           </div>
         )}
+        {terminalNotice && (
+          <aside className="terminal-notice" role="note">
+            {terminalNotice}
+          </aside>
+        )}
         {session.origin === "shim" && (
           <aside className="terminal-control-notice" role="note">
             This session was controlled from a terminal. Some terminal-entered prompts may only be visible in Terminal Mode.
@@ -480,6 +493,9 @@ function semanticMessages(eventList: EventEnvelope[]): ChatMessage[] {
 function semanticMessage(event: EventEnvelope): ChatMessage | null {
   const data = event.data as SemanticEventData | undefined;
   if (event.type === "chat.user_message" || event.type === "chat.assistant_message" || event.type === "chat.system_message") {
+    if (event.type === "chat.system_message" && data?.source === "codex" && data.content?.includes("Codex is running in a terminal interface")) {
+      return null;
+    }
     const fallbackRole = event.type === "chat.user_message" ? "user" : event.type === "chat.assistant_message" ? "assistant" : "system";
     return data?.content ? { id: data.message_id || event.id, role: data.role || fallbackRole, text: data.content, ts: event.ts } : null;
   }

@@ -201,6 +201,31 @@ func TestParserExtractsLastAssistantBlockAndWrappedLines(t *testing.T) {
 	}
 }
 
+func TestParserExtractsAssistantResponseAfterApprovalOverlay(t *testing.T) {
+	parser := &Parser{}
+	parser.PromptSequence("request approval", nil)
+	parser.Process(harness.TerminalUpdate{
+		Chunk: []byte(
+			"\x1b[2J" +
+				"\x1b[5;1H› request approval\x1b[K" +
+				"\x1b[8;1HWould you like to run the following command?\x1b[K" +
+				"\x1b[10;1H$ printf safe\x1b[K" +
+				"\x1b[12;1H› 1. Yes, proceed (y)\x1b[K" +
+				"\x1b[15;1H• Created example.txt after approval.\x1b[K" +
+				"\x1b[18;1H› Write tests for @filename\x1b[K" +
+				"\x1b[20;1Hgpt-fake high · /tmp/harnessrelay-fake\x1b[K",
+		),
+		Rows: 24,
+		Cols: 100,
+	})
+
+	event := eventOfType(t, parser.OnIdle(), events.TypeChatAssistantMessage)
+	data := event.Data.(events.ChatMessage)
+	if data.Content != "Created example.txt after approval." {
+		t.Fatalf("assistant content = %q", data.Content)
+	}
+}
+
 func TestParseMetadataUsesRenderedModelFooter(t *testing.T) {
 	metadata, ok := parseMetadata(
 		"OpenAI Codex (v0.145.0)\n  gpt-5.6-sol high · /tmp/project",

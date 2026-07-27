@@ -24,11 +24,21 @@ try:
         value = os.read(sys.stdin.fileno(), 1)
         if not value:
             break
-        if awaiting_approval and value == b"\x1b":
-            awaiting_approval = False
-            write("\r\nDENIED\r\n")
-            buffer.clear()
-            continue
+        if awaiting_approval:
+            if value == b"\x1b":
+                awaiting_approval = False
+                write("\r\nDENIED\r\n")
+                buffer.clear()
+                continue
+            if value == b"y":
+                awaiting_approval = False
+                write("\r\nAPPROVED\r\nREADY\r\n")
+                write("\x1b[12;1H› request approval\x1b[K")
+                write("\x1b[15;1H• Created example.txt after approval.\x1b[K")
+                write("\x1b[18;1H› Write tests for @filename\x1b[K")
+                write("\x1b[20;1Hgpt-fake high · /tmp/harnessrelay-fake\x1b[K")
+                buffer.clear()
+                continue
         buffer.extend(value)
         submitted = False
         if buffer.endswith(b"\x1b[13u"):

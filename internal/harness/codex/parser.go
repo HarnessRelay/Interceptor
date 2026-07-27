@@ -412,14 +412,7 @@ func (p *Parser) status(status, detail string, confidence float64) events.Event 
 }
 
 func (p *Parser) approvalText(snapshot string) string {
-	text := p.recent
-	if snapshot != "" {
-		text += "\n" + snapshot
-	}
-	if p.screen != nil {
-		text += "\n" + p.screen.String()
-	}
-	return text
+	return p.recent
 }
 
 func parseMetadata(text, fallbackWorkDir string) (events.HarnessMetadata, bool) {
@@ -506,7 +499,7 @@ func assistantResponseAfter(lines []string, promptIndex int, model string) strin
 	assistantIndex := -1
 	for index := promptIndex + 1; index < len(lines); index++ {
 		trimmed := strings.TrimSpace(lines[index])
-		if _, ok := promptContent(lines[index]); ok {
+		if content, ok := promptContent(lines[index]); ok && !isApprovalOption(content) {
 			break
 		}
 		if strings.HasPrefix(trimmed, "• ") {
@@ -522,7 +515,7 @@ func assistantResponseAfter(lines []string, promptIndex int, model string) strin
 		line := strings.TrimRight(lines[index], " ")
 		trimmed := strings.TrimSpace(line)
 		if index > assistantIndex {
-			if _, ok := promptContent(line); ok {
+			if content, ok := promptContent(line); ok && !isApprovalOption(content) {
 				break
 			}
 			if isModelFooter(trimmed, model) {
@@ -590,6 +583,13 @@ func promptContent(line string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(strings.TrimPrefix(trimmed, "›")), true
+}
+
+func isApprovalOption(content string) bool {
+	content = strings.TrimSpace(content)
+	return strings.HasPrefix(content, "1. Yes") ||
+		strings.HasPrefix(content, "2. Yes") ||
+		strings.HasPrefix(content, "3. No")
 }
 
 func matchingPromptLine(rendered, submitted string) bool {

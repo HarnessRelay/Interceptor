@@ -565,6 +565,47 @@ func TestManagerCodexApprovalDenyIsEventBound(t *testing.T) {
 	}
 }
 
+func TestManagerCodexApprovalAllowEmitsAssistantResult(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Command: fixturePath(t, "codex"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	output := sess.Subscribe()
+	readUntil(t, output, "OpenAI Codex", 5*time.Second)
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+	if err := mgr.SubmitPrompt(sess.ID, "request approval"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	readUntil(t, output, "Would you like to run the following command?", 5*time.Second)
+	approval := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalRequired, 5*time.Second)
+	if err := mgr.ExecuteAction(sess.ID, approval.ID, "codex.approval_allow"); err != nil {
+		t.Fatalf("ExecuteAction allow: %v", err)
+	}
+	readUntil(t, output, "APPROVED", 5*time.Second)
+	resolved := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalResolved, 5*time.Second)
+	if data := resolved.Data.(events.ApprovalResolved); data.ApprovalEventID != approval.ID || data.Resolution != "approved" {
+		t.Fatalf("approval.resolved = %+v", data)
+	}
+	assistant := waitForHistoryEventAfter(t, bus, sess.ID, events.TypeChatAssistantMessage, resolved.Sequence, 20*time.Second)
+	if data := assistant.Data.(events.ChatMessage); data.Content != "Created example.txt after approval." || data.MessageID != "codex-turn-1" {
+		t.Fatalf("assistant message = %+v", data)
+	}
+}
+
 func TestManagerInterrupt(t *testing.T) {
 	mgr := NewManager()
 	sess, err := mgr.Create(context.Background(), CreateOptions{

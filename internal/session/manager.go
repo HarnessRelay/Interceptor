@@ -654,6 +654,9 @@ func (m *Manager) ExecuteAction(id, eventID, actionID string) error {
 			Confidence: 0.95,
 		},
 	})
+	if hasCapability(s.Capabilities, harness.CapabilityStatusDetection) {
+		s.scheduleSemanticIdle()
+	}
 	return nil
 }
 
