@@ -392,6 +392,24 @@ export function ChatView({
         )}
         <div className="transcript" ref={transcriptRef} role="log" aria-label="Session conversation" aria-live="polite">
           <div className="transcript-inner">
+          {messages.length === 0 ? (
+            <div className="message system-message">
+              <span className="system-icon" aria-hidden="true">◇</span>
+              <div>
+                <strong>{semanticAdapter ? "Waiting for the harness" : "Conversation ready"}</strong>
+                <p>{semanticAdapter
+                  ? "Semantic messages will appear here. The complete live screen remains available in Terminal Mode."
+                  : "Send plain text below. If this command uses a terminal interface, open Terminal Mode for the live screen."}</p>
+              </div>
+            </div>
+          ) : (
+            messages.map((message) => (
+              <article key={message.id} className={`message message-${message.role}`} aria-label={`${message.role} message`}>
+                <div className="message-role">{message.role === "user" ? "You" : message.role === "assistant" ? session.adapter_name || "Harness" : "HarnessRelay"}</div>
+                <pre>{message.text}</pre>
+              </article>
+            ))
+          )}
           {approvals.map((event) => {
             const data = event.data as SemanticEventData;
             return (
@@ -421,24 +439,6 @@ export function ChatView({
               </section>
             );
           })}
-          {messages.length === 0 ? (
-            <div className="message system-message">
-              <span className="system-icon" aria-hidden="true">◇</span>
-              <div>
-                <strong>{semanticAdapter ? "Waiting for the harness" : "Conversation ready"}</strong>
-                <p>{semanticAdapter
-                  ? "Semantic messages will appear here. The complete live screen remains available in Terminal Mode."
-                  : "Send plain text below. If this command uses a terminal interface, open Terminal Mode for the live screen."}</p>
-              </div>
-            </div>
-          ) : (
-            messages.map((message) => (
-              <article key={message.id} className={`message message-${message.role}`} aria-label={`${message.role} message`}>
-                <div className="message-role">{message.role === "user" ? "You" : message.role === "assistant" ? session.adapter_name || "Harness" : "HarnessRelay"}</div>
-                <pre>{message.text}</pre>
-              </article>
-            ))
-          )}
           </div>
         </div>
       </div>

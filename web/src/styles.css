@@ -1179,6 +1179,7 @@ kbd {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
+  flex-shrink: 0;
   border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-surface));
