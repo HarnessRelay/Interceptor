@@ -8,3 +8,5 @@ web/node_modules/
 *.png
 .kilo
 .kilo/**
+.commandcode
+.commandcode/**

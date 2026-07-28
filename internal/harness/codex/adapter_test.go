@@ -70,8 +70,9 @@ func TestParserPromptBytesTracksCurrentKeyboardProtocol(t *testing.T) {
 
 func TestCommandCatalogIsVersionVerifiedAndUsesCurrentKeyboardProtocol(t *testing.T) {
 	parser := &Parser{}
-	if commands := parser.CommandCatalog(); len(commands) != 0 {
-		t.Fatalf("catalog before version detection = %v", commands)
+	// Commands are now always available (version-agnostic)
+	if commands := parser.CommandCatalog(); len(commands) == 0 {
+		t.Fatal("expected commands to be available before version detection")
 	}
 	parser.Process(harness.TerminalUpdate{
 		Chunk:    []byte("\x1b[>7uOpenAI Codex (v0.145.0)\r\n"),
@@ -108,8 +109,9 @@ func TestCommandCatalogRejectsUnknownCodexVersion(t *testing.T) {
 		Chunk:    []byte("OpenAI Codex (v9.0.0)\r\n"),
 		Snapshot: []byte("OpenAI Codex (v9.0.0)\r\n"),
 	})
-	if commands := parser.CommandCatalog(); len(commands) != 0 {
-		t.Fatalf("unknown-version catalog = %v", commands)
+	// Commands are now version-agnostic, so they should always be available
+	if commands := parser.CommandCatalog(); len(commands) == 0 {
+		t.Fatal("expected commands to be available for unknown version")
 	}
 }
 

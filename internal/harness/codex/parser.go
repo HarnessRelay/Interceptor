@@ -40,6 +40,11 @@ type Parser struct {
 	turn           uint64
 	lastAssistant  string
 	screenFailed   bool
+
+	// Command discovery state
+	discoveredCommands []harness.CommandDescriptor
+	commandsInitialized bool
+	lastDiscoveryOutput string
 }
 
 func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
@@ -63,6 +68,10 @@ func (p *Parser) Process(update harness.TerminalUpdate) []events.Event {
 			},
 		})
 	}
+
+	// Initialize commands if needed and discover new commands
+	p.ensureCommandsInitialized()
+	p.discoverCommandsFromOutput(snapshot)
 
 	if !p.announcedUI && (strings.Contains(snapshot, "OpenAI Codex") || strings.Contains(string(update.Snapshot), "\x1b[>7u")) {
 		p.announcedUI = true
@@ -214,47 +223,214 @@ func (p *Parser) PromptSequence(text string, _ []byte) [][]byte {
 	return [][]byte{[]byte(text), key}
 }
 
-// CommandCatalog returns the catalog verified against codex-cli 0.145.x.
-// Unknown versions deliberately fall back to the raw terminal command menu.
+// ensureCommandsInitialized initializes the command catalog with hardcoded commands
+// and any discovered commands from terminal output.
+func (p *Parser) ensureCommandsInitialized() {
+	if p.commandsInitialized {
+		return
+	}
+	// Start with hardcoded commands (version-agnostic)
+	p.discoveredCommands = append([]harness.CommandDescriptor(nil), codex0145Commands...)
+	p.commandsInitialized = true
+}
+
+// discoverCommandsFromOutput parses terminal output for command patterns.
+func (p *Parser) discoverCommandsFromOutput(snapshot string) {
+	// Avoid re-processing same output
+	if snapshot == p.lastDiscoveryOutput {
+		return
+	}
+	p.lastDiscoveryOutput = snapshot
+
+	// Look for command patterns in terminal output
+	lines := strings.Split(snapshot, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if command := parseCommandFromOutput(line); command != nil {
+			p.addDiscoveredCommand(command)
+		}
+	}
+
+	// Also look for help output sections
+	if strings.Contains(snapshot, "Available commands") || strings.Contains(snapshot, "Commands:") {
+		p.discoverCommandsFromHelp(snapshot)
+	}
+}
+
+// discoverCommandsFromHelp parses help output for commands.
+func (p *Parser) discoverCommandsFromHelp(helpText string) {
+	lines := strings.Split(helpText, "\n")
+	inCommandsSection := false
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Detect commands section
+		if strings.Contains(line, "Available commands") || strings.Contains(line, "Commands:") {
+			inCommandsSection = true
+			continue
+		}
+
+		if inCommandsSection {
+			if line == "" {
+				// End of commands section
+				break
+			}
+
+			// Parse command line
+			if command := parseCommandFromOutput(line); command != nil {
+				p.addDiscoveredCommand(command)
+			}
+		}
+	}
+}
+
+// addDiscoveredCommand adds a command to the discovered list if not already present.
+// If the command already exists, the description is updated if a new one is provided.
+func (p *Parser) addDiscoveredCommand(command *harness.CommandDescriptor) {
+	// Check if command already exists
+	for i, existing := range p.discoveredCommands {
+		if existing.ID == command.ID {
+			// Update description if a new one is provided
+			if command.Description != "" {
+				p.discoveredCommands[i].Description = command.Description
+			}
+			return
+		}
+	}
+
+	// Add new command
+	p.discoveredCommands = append(p.discoveredCommands, *command)
+}
+
+// parseCommandFromOutput extracts a command from a terminal line.
+func parseCommandFromOutput(line string) *harness.CommandDescriptor {
+	// Skip empty lines or lines that don't look like commands
+	if len(line) < 2 || line[0] != '/' {
+		return nil
+	}
+
+	// Skip lines that are clearly not commands
+	if strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/ ") {
+		return nil
+	}
+
+	// Parse command line
+	// Examples:
+	// "/status - Show status information"
+	// "/diff  Show current diff"
+	// "/model"
+
+	parts := strings.SplitN(line, " ", 2)
+	if len(parts) < 1 {
+		return nil
+	}
+
+	invocation := strings.TrimSpace(parts[0])
+	if !strings.HasPrefix(invocation, "/") || len(invocation) < 2 {
+		return nil
+	}
+
+	// Extract command name (remove /)
+	name := strings.TrimPrefix(invocation, "/")
+
+	// Validate command name (alphanumeric, hyphens, underscores)
+	if !isValidCommandName(name) {
+		return nil
+	}
+
+	// Extract description if available
+	description := ""
+	if len(parts) > 1 {
+		desc := strings.TrimSpace(parts[1])
+		// Remove leading dash or similar
+		desc = strings.TrimLeft(desc, "- ")
+		if len(desc) > 0 {
+			description = desc
+		}
+	}
+
+	return &harness.CommandDescriptor{
+		ID:          name,
+		Invocation:  invocation,
+		Label:       formatCommandLabel(name),
+		Description: description,
+		Group:       "Discovered",
+		Interaction: harness.CommandSubmit,
+	}
+}
+
+// isValidCommandName validates a command name.
+func isValidCommandName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// formatCommandLabel formats a command name as a label.
+func formatCommandLabel(name string) string {
+	// Convert "status" to "Status", "debug-config" to "Debug Config"
+	words := strings.Split(name, "-")
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// CommandCatalog returns the catalog of available commands.
+// Commands are initialized from the hardcoded list and any discovered commands.
 func (p *Parser) CommandCatalog() []harness.CommandDescriptor {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !strings.HasPrefix(p.lastMetadata.Version, "0.145.") {
-		return nil
-	}
-	return append([]harness.CommandDescriptor(nil), codex0145Commands...)
+
+	p.ensureCommandsInitialized()
+
+	return append([]harness.CommandDescriptor(nil), p.discoveredCommands...)
 }
 
 // CommandSequence builds a catalog-validated command without opening an agent turn.
 func (p *Parser) CommandSequence(commandID, arguments string) ([][]byte, harness.CommandDescriptor, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !strings.HasPrefix(p.lastMetadata.Version, "0.145.") {
-		return nil, harness.CommandDescriptor{}, errors.New("codex command catalog is unavailable for this version")
-	}
+
+	p.ensureCommandsInitialized()
+
 	var command harness.CommandDescriptor
 	found := false
-	for _, candidate := range codex0145Commands {
+	for _, candidate := range p.discoveredCommands {
 		if candidate.ID == commandID {
 			command = candidate
 			found = true
 			break
 		}
 	}
+
 	if !found {
-		return nil, harness.CommandDescriptor{}, errors.New("unknown Codex command")
+		return nil, harness.CommandDescriptor{}, errors.New("unknown command")
 	}
+
 	arguments = strings.TrimSpace(arguments)
 	if command.ArgumentHint != "" && arguments == "" && command.Interaction != harness.CommandInsert {
 		return nil, harness.CommandDescriptor{}, errors.New("command arguments are required")
 	}
+
 	text := command.Invocation
 	if arguments != "" {
 		text += " " + arguments
 	}
+
 	if command.Interaction == harness.CommandPrefillTerminal {
 		return [][]byte{[]byte(text)}, command, nil
 	}
+
 	key := []byte{'\r'}
 	if p.kittyKeyboard.Load() {
 		key = []byte(kittyEnter)
