@@ -2,35 +2,54 @@
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
-  --color-bg-root: #070b11;
-  --color-bg-sidebar: #0b1018;
-  --color-bg-canvas: #090e15;
-  --color-bg-surface: #101721;
-  --color-bg-elevated: #151e2a;
-  --color-bg-input: #0c121b;
-  --color-bg-selected: #102722;
-  --color-bg-hover: #172230;
-  --color-bg-overlay: rgb(2 6 11 / 0.76);
-  --color-bg-danger: #32191e;
-  --color-bg-warning: #292410;
-  --color-bg-success: #10271e;
+  /* ===== BRAND COLORS (Extracted from Logo) ===== */
+  --brand-teal: #06d6a0;
+  --brand-cyan: #00b4d8;
+  --brand-yellow: #ffd166;
+  --brand-white: #ffffff;
 
-  --color-border: #273345;
-  --color-border-subtle: #1b2635;
-  --color-border-strong: #3a4a61;
-  --color-border-focus: #23d7b0;
+  /* ===== SURFACE COLORS ===== */
+  --color-bg-root: #060d18;
+  --color-bg-sidebar: #0b111d;
+  --color-bg-canvas: #080f1c;
+  --color-bg-surface: #0f1929;
+  --color-bg-elevated: #152238;
+  --color-bg-input: #0c1525;
+  --color-bg-selected: #0d2a3a;
+  --color-bg-hover: #1a2d42;
+  --color-bg-overlay: rgba(2, 8, 16, 0.82);
+  --color-bg-danger: #2a1015;
+  --color-bg-warning: #2a2210;
+  --color-bg-success: #0d2a22;
 
-  --color-text-primary: #f2f6fa;
-  --color-text-secondary: #b7c4d4;
-  --color-text-muted: #8e9db0;
-  --color-text-inverse: #04130f;
-  --color-accent-teal: #23d7b0;
-  --color-accent-cyan: #43c8ed;
+  /* ===== BORDER COLORS ===== */
+  --color-border: #1e3250;
+  --color-border-subtle: #152238;
+  --color-border-strong: #2a4566;
+  --color-border-focus: #06d6a0;
+
+  /* ===== TEXT COLORS ===== */
+  --color-text-primary: #f0f4f8;
+  --color-text-secondary: #b8c5d6;
+  --color-text-muted: #7a8fa8;
+  --color-text-inverse: #020b14;
+
+  /* ===== ACCENT COLORS ===== */
+  --color-accent-teal: #06d6a0;
+  --color-accent-cyan: #00b4d8;
+
+  /* ===== STATUS COLORS ===== */
   --color-success: #4dde88;
   --color-warning: #f1cb52;
   --color-danger: #ff767d;
   --color-danger-strong: #ff9297;
+  --color-info: #43c8ed;
 
+  /* ===== TYPOGRAPHY ===== */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, Menlo, monospace;
+
+  /* ===== SPACING ===== */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -39,28 +58,44 @@
   --space-6: 24px;
   --space-8: 32px;
   --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
 
-  --radius-sm: 7px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  /* ===== RADIUS ===== */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-pill: 999px;
 
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  /* ===== SHADOWS ===== */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 40px -10px rgba(6, 214, 160, 0.25);
+  --shadow-glow-blue: 0 0 50px -15px rgba(0, 180, 216, 0.3);
+  --shadow-menu: 0 8px 8px rgba(0, 0, 0, 0.28);
+  --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --focus-ring: 0 0 0 3px rgba(6, 214, 160, 0.25);
 
-  --shadow-menu: 0 8px 8px rgb(0 0 0 / 0.28);
-  --shadow-dialog: 0 8px 8px rgb(0 0 0 / 0.32);
-  --focus-ring: 0 0 0 3px rgb(35 215 176 / 0.24);
-
+  /* ===== MOTION ===== */
   --motion-fast: 140ms;
   --motion-base: 200ms;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* ===== Z-INDEX ===== */
   --z-menu: 20;
   --z-sticky: 30;
+  --z-drawer: 35;
   --z-backdrop: 40;
   --z-modal: 50;
-  --z-drawer: 35;
+
+  /* ===== GRADIENTS ===== */
+  --gradient-hero: linear-gradient(135deg, #0a1628 0%, #0c2b4a 40%, #0a3d5c 70%, #061a30 100%);
+  --gradient-sidebar: linear-gradient(180deg, #0b111d 0%, #0d1626 100%);
+  --gradient-accent: linear-gradient(135deg, var(--brand-teal) 0%, var(--brand-cyan) 100%);
+  --gradient-warm: linear-gradient(135deg, var(--brand-cyan) 0%, var(--brand-yellow) 100%);
 
   /* Compatibility aliases for xterm-adjacent legacy code. */
   --bg: var(--color-bg-root);
@@ -80,5 +115,5 @@
   --danger: var(--color-danger);
   --danger-surface: var(--color-bg-danger);
   --radius: var(--radius-sm);
-  --focus: rgb(35 215 176 / 0.24);
+  --focus: rgba(6, 214, 160, 0.25);
 }
