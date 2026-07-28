@@ -1395,6 +1395,22 @@ kbd {
   color: #a6f0dc;
 }
 
+.message-assistant {
+  width: auto;
+  max-width: min(680px, 86%);
+  align-self: flex-start;
+  margin-right: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  border-top-left-radius: 4px;
+  background: var(--color-bg-surface);
+  padding: var(--space-3) var(--space-4);
+}
+
+.message-assistant .message-role {
+  color: var(--brand-teal);
+}
+
 .message-system,
 .system-message {
   display: flex;
