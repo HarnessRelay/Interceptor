@@ -311,7 +311,7 @@ function SessionList({
   ].filter((group) => group.items.length > 0);
 
   return (
-    <div className="session-list">
+    <div className="session-list" aria-live="polite" aria-relevant="additions text">
       {groups.map((group) => (
         <section className="session-group" key={group.label} aria-label={`${group.label} sessions`}>
           <h2>{group.label}<span>{group.items.length}</span></h2>

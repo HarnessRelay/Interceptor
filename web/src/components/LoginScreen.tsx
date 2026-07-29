@@ -52,7 +52,7 @@ export function LoginScreen({
       <section className="login-form-region" aria-label="Dashboard sign in">
         <form className="login-panel" onSubmit={submit}>
           <div className="login-form-heading">
-            <span className="connection-mark" aria-hidden="true"><i /></span>
+            <span className="connection-mark" aria-hidden="true"><span className="dot" /></span>
             <div>
               <h2>Connect to daemon</h2>
               <p>Enter the token printed when <code>harnessd</code> started.</p>
@@ -79,7 +79,7 @@ export function LoginScreen({
           <p className="login-help">The token stays in an HttpOnly local session. It is never stored in browser storage.</p>
         </form>
         <footer className="login-footer">
-          <span><i aria-hidden="true" /> 127.0.0.1 only</span>
+          <span><span className="dot" aria-hidden="true" /> 127.0.0.1 only</span>
           <span>Terminal source of truth</span>
         </footer>
       </section>
@@ -88,5 +88,5 @@ export function LoginScreen({
 }
 
 export function LogoMark({ variant = "mark" }: { variant?: "mark" | "wordmark" }) {
-  return <img className={variant === "wordmark" ? "logo-wordmark" : "logo-mark"} src={variant === "wordmark" ? logoWithText : logoWithoutText} alt="" aria-hidden="true" />;
+  return <img className={variant === "wordmark" ? "logo-wordmark" : "logo-mark"} src={variant === "wordmark" ? logoWithText : logoWithoutText} alt="" aria-hidden="true" loading="lazy" />;
 }

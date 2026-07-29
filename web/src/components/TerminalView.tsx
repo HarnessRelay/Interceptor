@@ -30,16 +30,17 @@ export function TerminalView({
 
   useEffect(() => {
     if (!hostRef.current) return;
+    const root = getComputedStyle(document.documentElement);
     const term = new Terminal({
       cursorBlink: true,
       convertEol: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
       theme: {
-        background: "#080d14",
-        foreground: "#f4f7fb",
-        cursor: "#16e0b5",
-        selectionBackground: "#263244"
+        background: root.getPropertyValue("--color-terminal-bg").trim() || "#080d14",
+        foreground: root.getPropertyValue("--color-terminal-fg").trim() || "#f4f7fb",
+        cursor: root.getPropertyValue("--color-terminal-cursor").trim() || "#16e0b5",
+        selectionBackground: root.getPropertyValue("--color-terminal-selection").trim() || "#263244"
       }
     });
     const fit = new FitAddon();

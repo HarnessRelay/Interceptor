@@ -139,7 +139,7 @@ export function App() {
         createSignal={createSignal}
       />
 
-      <section className="workspace" aria-label="Active harness session">
+      <section className="workspace" aria-label="Active harness session" aria-live="polite" aria-relevant="additions text">
         {error && (
           <div className="notice" role="alert">
             <span>{error}</span>

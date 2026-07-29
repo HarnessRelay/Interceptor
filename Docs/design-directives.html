@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HarnessRelay Design Directives</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; background-color: #020408; color: #e2e8f0; }
+        .iteration-section { border-bottom: 1px solid #1e293b; padding-bottom: 4rem; margin-bottom: 4rem; }
+        .mockup-frame { border: 1px solid #334155; border-radius: 12px; overflow: hidden; background: #0f172a; position: relative; }
+
+        /* Iteration 2: JetBrains Gradient */
+        .ijb-bg { background: linear-gradient(135deg, #0c1b3a 0%, #0f2b5e 50%, #0a1a40 100%); }
+        .ijb-glow { box-shadow: 0 0 50px -15px rgba(59, 130, 246, 0.5); }
+
+        /* Iteration 3: Minimal Noir */
+        .imn-border { border-color: #262626; }
+
+        /* Iteration 4: Gradient Noir (Mix of 2 + 3) */
+        .ign-bg { background: linear-gradient(180deg, #000000 0%, #050a14 60%, #0a1628 100%); }
+        .ign-hero { background: linear-gradient(135deg, #000000 0%, #061024 50%, #0c1d3d 100%); }
+        .ign-accent { color: #3b82f6; }
+        .ign-pill { border-radius: 999px; }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="antialiased">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-50 bg-[#020408]/90 backdrop-blur-md border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-tight">HarnessRelay <span class="text-slate-500 font-normal">Design Directives</span></h1>
+                <p class="text-xs text-slate-400 mt-1">3 Visual Iterations for Frontend Redesign</p>
+            </div>
+            <div class="flex gap-3">
+                <a href="#iteration-1" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 rounded-full transition-colors border border-slate-700">1. Gradient</a>
+                <a href="#iteration-2" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 rounded-full transition-colors border border-slate-700">2. Noir</a>
+                <a href="#iteration-3" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 rounded-full transition-colors border border-slate-700">3. Gradient Noir</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-12 space-y-20">
+
+        <!-- Context Summary -->
+        <section class="bg-slate-900/50 border border-slate-800 rounded-2xl p-8">
+            <h2 class="text-2xl font-bold text-white mb-6">Design Research Summary</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <h3 class="text-sm font-semibold text-purple-400 uppercase tracking-wider mb-3">JetBrains Patterns</h3>
+                    <ul class="text-sm text-slate-400 space-y-2 list-disc list-inside">
+                        <li>Vibrant deep blue gradient backgrounds</li>
+                        <li>Ultra-bold, centered white headlines</li>
+                        <li>Product mockups as central focal points</li>
+                        <li>Large, pill-shaped CTAs with high contrast</li>
+                        <li>Professional, enterprise-grade density</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-sm font-semibold text-white uppercase tracking-wider mb-3">Minimal Noir Patterns</h3>
+                    <ul class="text-sm text-slate-400 space-y-2 list-disc list-inside">
+                        <li>Pure black and white with zero decoration</li>
+                        <li>Swiss grid alignment and typography scale</li>
+                        <li>Sharp edges, no border radius</li>
+                        <li>Monospace metadata, minimal iconography</li>
+                        <li>Whitespace-first hierarchy</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- ITERATION 1: JETBRAINS GRADIENT -->
+        <!-- ============================================================ -->
+        <section id="iteration-1" class="iteration-section">
+            <div class="mb-10">
+                <div class="flex items-center gap-3 mb-2">
+                    <span class="text-xs font-bold bg-purple-500/20 text-purple-400 px-2 py-1 rounded">ITERATION 01</span>
+                    <h2 class="text-3xl font-bold text-white">JetBrains Gradient</h2>
+                </div>
+                <p class="text-slate-400 max-w-3xl">
+                    Inspired by JetBrains.com. A vibrant, energetic deep blue gradient dominates the canvas.
+                    Features ultra-bold centered typography, commanding product mockups, and high-contrast pill CTAs.
+                    Conveys enterprise-grade power and confidence.
+                </p>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Vibrant Blue Gradient</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Bold Typography</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Pill CTAs</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Centered Layout</span>
+                </div>
+            </div>
+
+            <div class="space-y-12">
+                <!-- Login Mockup -->
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Login Screen</h3>
+                    <div class="mockup-frame h-[650px] ijb-bg flex flex-col items-center justify-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz48L3N2Zz4=')] opacity-30"></div>
+                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-blue-500/20 rounded-full blur-[150px]"></div>
+
+                        <div class="relative z-10 text-center max-w-2xl px-6">
+                            <div class="flex justify-center mb-8">
+                                <div class="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-blue-900 font-bold text-xl shadow-2xl">H</div>
+                            </div>
+                            <h1 class="text-6xl font-extrabold text-white leading-tight mb-6 tracking-tight">
+                                Your harnesses.<br/>
+                                <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-white">One workspace.</span>
+                            </h1>
+                            <p class="text-lg text-blue-200/80 mb-10">
+                                An open platform for terminal-based coding agents.
+                            </p>
+
+                            <!-- Product Mockup Card -->
+                            <div class="bg-black/30 backdrop-blur-md border border-white/10 rounded-2xl p-2 mb-10 ijb-glow mx-auto max-w-lg">
+                                <div class="bg-[#0a0e1a] rounded-xl p-4 text-left">
+                                    <div class="flex items-center gap-2 mb-3">
+                                        <div class="w-3 h-3 rounded-full bg-red-500/80"></div>
+                                        <div class="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                                        <div class="w-3 h-3 rounded-full bg-green-500/80"></div>
+                                        <span class="text-[10px] text-slate-500 ml-2 font-mono">HarnessRelay — Terminal</span>
+                                    </div>
+                                    <div class="font-mono text-xs text-slate-300 space-y-1">
+                                        <p><span class="text-green-400">$</span> harnessd start</p>
+                                        <p class="text-slate-500">[INFO] Daemon listening on 127.0.0.1:8080</p>
+                                        <p class="text-slate-500">[INFO] Session manager ready</p>
+                                        <p><span class="text-blue-400">$</span> <span class="animate-pulse">_</span></p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex justify-center gap-4">
+                                <button class="h-12 px-8 bg-white text-blue-900 font-bold rounded-full hover:bg-blue-50 transition-colors shadow-xl shadow-black/20">
+                                    Connect to Daemon
+                                </button>
+                                <button class="h-12 px-8 bg-white/10 text-white font-semibold rounded-full border border-white/20 hover:bg-white/20 transition-colors">
+                                    Documentation
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- App Shell Mockup -->
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Chat & Terminal Workspace</h3>
+                    <div class="mockup-frame h-[700px] bg-[#050b1e] flex relative overflow-hidden">
+                        <!-- Sidebar -->
+                        <div class="w-64 bg-[#0a1128] border-r border-white/5 flex flex-col">
+                            <div class="p-5">
+                                <div class="flex items-center gap-3 mb-6">
+                                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">H</div>
+                                    <span class="font-bold text-white tracking-tight">HarnessRelay</span>
+                                </div>
+                                <button class="w-full h-11 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-full transition-all shadow-lg shadow-blue-900/40 text-sm mb-6">
+                                    + New Session
+                                </button>
+                                <div class="space-y-1">
+                                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Sessions</p>
+                                    <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-blue-600/20 border-l-2 border-blue-500 cursor-pointer">
+                                        <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                                        <div class="min-w-0">
+                                            <p class="text-sm font-medium text-white truncate">Codex Session</p>
+                                            <p class="text-[10px] text-slate-400 truncate">Running &middot; Chat mode</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+                                        <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                                        <div class="min-w-0">
+                                            <p class="text-sm font-medium text-slate-300 truncate">Bash Shell</p>
+                                            <p class="text-[10px] text-slate-500 truncate">Running &middot; Terminal</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+                                        <div class="w-2 h-2 rounded-full bg-slate-500"></div>
+                                        <div class="min-w-0">
+                                            <p class="text-sm font-medium text-slate-400 truncate">Claude Code</p>
+                                            <p class="text-[10px] text-slate-600 truncate">Exited</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-auto p-5 border-t border-white/5">
+                                <div class="flex items-center justify-between text-[10px] text-slate-500">
+                                    <span>2 active sessions</span>
+                                    <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span> Online</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Main Content -->
+                        <div class="flex-1 flex flex-col">
+                            <!-- Header -->
+                            <div class="h-16 border-b border-white/5 flex items-center justify-between px-6">
+                                <div class="flex items-center gap-4">
+                                    <h2 class="text-lg font-bold text-white">Codex Session</h2>
+                                    <span class="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">LIVE</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <div class="inline-flex bg-[#0a1128] rounded-full p-1 border border-white/10">
+                                        <button class="px-4 py-1.5 rounded-full bg-blue-600 text-white text-xs font-semibold shadow-lg">Chat</button>
+                                        <button class="px-4 py-1.5 rounded-full text-slate-400 text-xs font-medium hover:text-white transition-colors">Terminal</button>
+                                    </div>
+                                    <button class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors text-xs">&bull;&bull;&bull;</button>
+                                </div>
+                            </div>
+
+                            <!-- Chat Content -->
+                            <div class="flex-1 overflow-y-auto p-8">
+                                <div class="max-w-3xl mx-auto space-y-8">
+                                    <div class="flex gap-4">
+                                        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">AI</div>
+                                        <div class="space-y-1">
+                                            <p class="text-xs font-bold text-blue-400">Codex</p>
+                                            <div class="bg-[#0a1128] border border-white/5 rounded-2xl rounded-tl-sm px-5 py-4">
+                                                <p class="text-sm text-slate-300 leading-relaxed">I've analyzed the request. I'll refactor the auth middleware to use JWT tokens. First, I'll check the current session-based implementation.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-4 flex-row-reverse">
+                                        <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">YO</div>
+                                        <div class="space-y-1 text-right">
+                                            <p class="text-xs font-bold text-slate-400">You</p>
+                                            <div class="bg-blue-600 rounded-2xl rounded-tr-sm px-5 py-4">
+                                                <p class="text-sm text-white leading-relaxed">Make sure to handle the refresh token rotation securely.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Input -->
+                            <div class="p-6 border-t border-white/5">
+                                <div class="max-w-3xl mx-auto relative">
+                                    <input type="text" placeholder="Message Codex..." class="w-full h-14 bg-[#0a1128] border border-white/10 rounded-full pl-6 pr-32 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all" />
+                                    <button class="absolute right-2 top-2 h-10 px-6 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-full transition-colors shadow-lg shadow-blue-900/40">
+                                        Send
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- ITERATION 2: MINIMAL NOIR -->
+        <!-- ============================================================ -->
+        <section id="iteration-2" class="iteration-section">
+            <div class="mb-10">
+                <div class="flex items-center gap-3 mb-2">
+                    <span class="text-xs font-bold bg-white/10 text-white px-2 py-1 rounded">ITERATION 02</span>
+                    <h2 class="text-3xl font-bold text-white">Minimal Noir</h2>
+                </div>
+                <p class="text-slate-400 max-w-3xl">
+                    Swiss design influence meets terminal aesthetic. Pure black and white with a single accent color.
+                    Extreme reliance on typography scale and whitespace for hierarchy. No decorative gradients or shadows.
+                    Brutalist yet elegant.
+                </p>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Pure Black/White</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Typography Hierarchy</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Swiss Grid</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Zero Decoration</span>
+                </div>
+            </div>
+
+            <div class="space-y-12">
+                <!-- Login Mockup -->
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Login Screen</h3>
+                    <div class="mockup-frame h-[600px] bg-black flex items-center justify-center">
+                        <div class="w-full max-w-md px-8">
+                            <div class="mb-12">
+                                <p class="text-xs text-white/40 font-mono mb-6">HARNESSRELAY v1.0</p>
+                                <h1 class="text-4xl font-medium text-white tracking-tight leading-tight">
+                                    Authenticate<br/>local daemon.
+                                </h1>
+                            </div>
+                            <div class="space-y-6">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-3">Access Token</label>
+                                    <input type="password" class="w-full h-12 bg-transparent border-b border-white/20 text-white text-lg focus:outline-none focus:border-white transition-colors placeholder:text-white/10 font-mono" placeholder="************************" />
+                                </div>
+                                <div class="flex items-center justify-between pt-4">
+                                    <p class="text-xs text-white/30 max-w-[200px] leading-relaxed">Token is handled via HttpOnly session. Never stored locally.</p>
+                                    <button class="w-12 h-12 bg-white text-black flex items-center justify-center hover:bg-white/90 transition-colors">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="mt-16 pt-6 border-t border-white/10 flex justify-between text-[10px] text-white/20 font-mono uppercase tracking-wider">
+                                <span>127.0.0.1</span>
+                                <span>Secure Connection</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- App Shell Mockup -->
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Chat & Terminal Workspace</h3>
+                    <div class="mockup-frame h-[700px] bg-black flex">
+                        <!-- Sidebar -->
+                        <div class="w-64 border-r border-white/10 flex flex-col">
+                            <div class="p-6 border-b border-white/10">
+                                <div class="flex items-center justify-between mb-6">
+                                    <span class="text-xs font-bold text-white tracking-widest uppercase">HarnessRelay</span>
+                                    <span class="text-[10px] text-white/30">v1.0</span>
+                                </div>
+                                <button class="w-full h-10 border border-white/20 text-white text-xs font-medium hover:bg-white hover:text-black transition-all uppercase tracking-wider">
+                                    New Session
+                                </button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto">
+                                <div class="p-6">
+                                    <p class="text-[10px] font-bold text-white/20 uppercase tracking-widest mb-4">Active</p>
+                                    <div class="space-y-4">
+                                        <div class="group cursor-pointer">
+                                            <div class="flex items-baseline justify-between mb-1">
+                                                <span class="text-sm text-white font-medium">Codex Session</span>
+                                                <span class="text-[10px] text-emerald-400 font-mono">RUN</span>
+                                            </div>
+                                            <p class="text-[10px] text-white/30 font-mono truncate">codex --workspace /proj</p>
+                                        </div>
+                                        <div class="group cursor-pointer">
+                                            <div class="flex items-baseline justify-between mb-1">
+                                                <span class="text-sm text-white/40 font-medium group-hover:text-white transition-colors">Bash Shell</span>
+                                                <span class="text-[10px] text-emerald-400 font-mono">RUN</span>
+                                            </div>
+                                            <p class="text-[10px] text-white/20 font-mono truncate">/bin/bash</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="p-6 border-t border-white/10">
+                                    <p class="text-[10px] font-bold text-white/20 uppercase tracking-widest mb-4">Finished</p>
+                                    <div class="space-y-4">
+                                        <div class="group cursor-pointer">
+                                            <div class="flex items-baseline justify-between mb-1">
+                                                <span class="text-sm text-white/40 font-medium group-hover:text-white transition-colors">Claude Code</span>
+                                                <span class="text-[10px] text-white/20 font-mono">END</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="p-6 border-t border-white/10">
+                                <p class="text-[10px] text-white/20 font-mono">2 sessions active</p>
+                            </div>
+                        </div>
+
+                        <!-- Main Content -->
+                        <div class="flex-1 flex flex-col">
+                            <div class="h-16 border-b border-white/10 flex items-center justify-between px-8">
+                                <div>
+                                    <h2 class="text-base font-medium text-white">Codex Session</h2>
+                                    <p class="text-[10px] text-white/30 font-mono mt-0.5">Model: gpt-4 &middot; /home/dev/project-alpha</p>
+                                </div>
+                                <div class="flex items-center gap-6">
+                                    <div class="flex items-center gap-4">
+                                        <button class="text-xs text-white font-medium border-b border-white pb-0.5">Chat</button>
+                                        <button class="text-xs text-white/30 hover:text-white transition-colors">Terminal</button>
+                                    </div>
+                                    <button class="text-[10px] text-white/30 hover:text-white transition-colors uppercase tracking-wider">Interrupt</button>
+                                </div>
+                            </div>
+                            <div class="flex-1 overflow-y-auto p-8">
+                                <div class="max-w-2xl space-y-8">
+                                    <div class="flex gap-4">
+                                        <span class="text-[10px] text-white/20 font-mono pt-1">09:42</span>
+                                        <div>
+                                            <p class="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">System</p>
+                                            <p class="text-sm text-white/60 leading-relaxed">Semantic messages will appear here. The complete live screen remains available in Terminal Mode.</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-4">
+                                        <span class="text-[10px] text-white/20 font-mono pt-1">09:43</span>
+                                        <div class="flex-1">
+                                            <p class="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">You</p>
+                                            <p class="text-sm text-white leading-relaxed">Refactor auth to JWT.</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-4">
+                                        <span class="text-[10px] text-white/20 font-mono pt-1">09:43</span>
+                                        <div class="flex-1">
+                                            <p class="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Codex</p>
+                                            <div class="text-sm text-white/80 leading-relaxed space-y-3">
+                                                <p>I'll refactor the auth middleware. Starting with the current implementation analysis.</p>
+                                                <div class="border-l border-white/20 pl-4 py-1">
+                                                    <p class="font-mono text-xs text-white/60">$ ls src/middleware/</p>
+                                                    <p class="font-mono text-xs text-white/60">auth.js  session.js  cors.js</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="p-6 border-t border-white/10">
+                                <div class="max-w-2xl relative">
+                                    <input type="text" placeholder="Message..." class="w-full h-12 bg-transparent border-b border-white/10 text-white text-sm focus:outline-none focus:border-white transition-colors placeholder:text-white/10" />
+                                    <button class="absolute right-0 top-2 text-xs text-white/40 hover:text-white transition-colors uppercase tracking-wider">Send &mdash; Return</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================ -->
+        <!-- ITERATION 3: GRADIENT NOIR (Mix of JetBrains + Minimal Noir) -->
+        <!-- ============================================================ -->
+        <section id="iteration-3" class="iteration-section">
+            <div class="mb-10">
+                <div class="flex items-center gap-3 mb-2">
+                    <span class="text-xs font-bold bg-blue-500/20 text-blue-400 px-2 py-1 rounded">ITERATION 03</span>
+                    <h2 class="text-3xl font-bold text-white">Gradient Noir</h2>
+                </div>
+                <p class="text-slate-400 max-w-3xl">
+                    A deliberate fusion: the vibrant deep blue gradient and bold typographic confidence of JetBrains,
+                    merged with the stark Swiss discipline, sharp edges, and pure black-and-white restraint of Minimal Noir.
+                    No decorative shadows. No rounded corners. Only gradient depth, grid alignment, and brutal clarity.
+                </p>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Deep Blue Gradient</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Sharp Edges (0px Radius)</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Bold Swiss Typography</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">Zero Decoration</span>
+                    <span class="text-xs border border-slate-700 text-slate-400 px-2 py-1 rounded-full">High Contrast</span>
+                </div>
+            </div>
+
+            <div class="space-y-12">
+                <!-- Login Mockup -->
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Login Screen</h3>
+                    <div class="mockup-frame h-[600px] ign-hero flex relative overflow-hidden">
+                        <!-- Subtle grid overlay -->
+                        <div class="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:64px_64px]"></div>
+                        <!-- Gradient glow -->
+                        <div class="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[150px]"></div>
+
+                        <div class="w-1/2 p-16 flex flex-col justify-between relative z-10">
+                            <div>
+                                <p class="text-[10px] font-mono text-blue-400/60 uppercase tracking-[0.2em] mb-8">HarnessRelay &mdash; Local Control Plane</p>
+                                <h1 class="text-6xl font-extrabold text-white leading-[0.95] tracking-tight mb-8">
+                                    Your harnesses.<br/>
+                                    <span class="text-blue-400">One workspace.</span>
+                                </h1>
+                                <p class="text-base text-slate-400 max-w-md leading-relaxed">
+                                    Run, inspect, and steer terminal-based coding agents through a calm semantic workspace.
+                                </p>
+                            </div>
+                            <div class="flex items-center gap-6 pt-8 border-t border-white/10">
+                                <span class="text-[10px] font-mono text-white/20 uppercase tracking-wider">127.0.0.1</span>
+                                <span class="text-[10px] font-mono text-white/20 uppercase tracking-wider">Secure</span>
+                                <span class="text-[10px] font-mono text-white/20 uppercase tracking-wider">Local-First</span>
+                            </div>
+                        </div>
+
+                        <div class="w-1/2 flex items-center justify-center relative z-10">
+                            <div class="w-full max-w-sm">
+                                <div class="border border-white/10 bg-black/40 p-10">
+                                    <h2 class="text-2xl font-bold text-white mb-2">Authenticate</h2>
+                                    <p class="text-sm text-slate-400 mb-8">Connect to your local daemon.</p>
+                                    <div class="space-y-6">
+                                        <div>
+                                            <label class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-3">Dashboard Token</label>
+                                            <input type="password" class="w-full h-12 bg-transparent border-b border-white/20 text-white text-base focus:outline-none focus:border-blue-500 transition-colors placeholder:text-white/10 font-mono" placeholder="************************" />
+                                        </div>
+                                        <div class="flex items-center justify-between pt-2">
+                                            <p class="text-xs text-white/30 max-w-[180px] leading-relaxed">HttpOnly session. Never stored locally.</p>
+                                            <button class="h-12 px-8 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-colors uppercase tracking-wider">
+                                                Connect
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- App Shell Mockup -->
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Chat & Terminal Workspace</h3>
+                    <div class="mockup-frame h-[700px] bg-[#050505] flex relative overflow-hidden">
+                        <!-- Gradient accent line at top -->
+                        <div class="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-blue-700 via-blue-400 to-blue-700 z-50"></div>
+
+                        <!-- Activity Bar -->
+                        <div class="w-12 bg-[#0a0a0a] border-r border-white/[0.06] flex flex-col items-center py-2 z-10 flex-shrink-0">
+                            <div class="w-12 h-12 flex items-center justify-center text-white bg-white/[0.06] border-l-2 border-blue-500 cursor-pointer" title="Sessions">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                            </div>
+                            <div class="w-12 h-12 flex items-center justify-center text-white/20 hover:text-white/60 cursor-pointer transition-colors" title="Search">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            </div>
+                            <div class="w-12 h-12 flex items-center justify-center text-white/20 hover:text-white/60 cursor-pointer transition-colors" title="Event Inspector">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            </div>
+                            <div class="mt-auto w-12 h-12 flex items-center justify-center text-white/20 hover:text-white/60 cursor-pointer transition-colors" title="Settings">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            </div>
+                        </div>
+
+                        <!-- Sidebar -->
+                        <div class="w-60 bg-[#0a0a0a] border-r border-white/[0.06] flex flex-col z-10">
+                            <div class="h-9 px-4 flex items-center justify-between">
+                                <span class="text-[11px] font-bold text-white/40 uppercase tracking-widest">Sessions</span>
+                                <button class="text-white/20 hover:text-white/60 text-xs transition-colors">+</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto py-2">
+                                <!-- Active session -->
+                                <div class="px-3 py-2 mx-2 bg-white/[0.04] border-l-2 border-blue-500 cursor-pointer">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-[13px] font-bold text-white truncate">Codex Session</span>
+                                        <span class="w-[6px] h-[6px] bg-emerald-400 flex-shrink-0"></span>
+                                    </div>
+                                    <div class="text-[10px] font-mono text-white/25 truncate">codex --workspace /proj</div>
+                                    <div class="text-[10px] font-mono text-white/15 truncate mt-0.5">/home/dev/project-alpha</div>
+                                    <div class="flex gap-1.5 mt-2">
+                                        <span class="text-[9px] font-mono text-blue-400/60 bg-blue-400/10 px-1.5 py-0.5 border border-blue-400/10">Chat</span>
+                                        <span class="text-[9px] font-mono text-white/20 bg-white/[0.03] px-1.5 py-0.5 border border-white/[0.04]">gpt-4</span>
+                                    </div>
+                                </div>
+                                <!-- Other session -->
+                                <div class="px-3 py-2 mx-2 border-l-2 border-transparent hover:bg-white/[0.02] hover:border-white/[0.08] cursor-pointer transition-all">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-[13px] font-medium text-white/60 truncate">Bash Shell</span>
+                                        <span class="w-[6px] h-[6px] bg-emerald-400 flex-shrink-0"></span>
+                                    </div>
+                                    <div class="text-[10px] font-mono text-white/20 truncate">/bin/bash</div>
+                                    <div class="flex gap-1.5 mt-2">
+                                        <span class="text-[9px] font-mono text-white/20 bg-white/[0.03] px-1.5 py-0.5 border border-white/[0.04]">Terminal</span>
+                                    </div>
+                                </div>
+                                <!-- Finished session -->
+                                <div class="px-3 py-2 mx-2 border-l-2 border-transparent hover:bg-white/[0.02] hover:border-white/[0.08] cursor-pointer transition-all">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-[13px] font-medium text-white/30 truncate">Claude Code</span>
+                                        <span class="text-[9px] font-mono text-white/15 flex-shrink-0">END</span>
+                                    </div>
+                                    <div class="text-[10px] font-mono text-white/15 truncate">claude --workspace /api</div>
+                                </div>
+                            </div>
+                            <div class="h-8 px-4 flex items-center justify-between border-t border-white/[0.06]">
+                                <span class="text-[10px] font-mono text-white/20">2 active</span>
+                                <span class="flex items-center gap-1.5 text-[10px] font-mono text-emerald-400/60">
+                                    <span class="w-1 h-1 bg-emerald-400"></span> daemon
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Editor Area -->
+                        <div class="flex-1 flex flex-col min-w-0 z-10">
+                            <!-- Tab Bar -->
+                            <div class="flex bg-[#0d0d0d] border-b border-white/[0.06] overflow-x-auto hide-scrollbar">
+                                <div class="flex items-center gap-2 px-4 h-9 bg-[#050505] border-t-2 border-blue-500 min-w-fit cursor-pointer">
+                                    <span class="text-[13px] text-white font-medium">Codex Session</span>
+                                    <span class="w-[6px] h-[6px] bg-emerald-400"></span>
+                                    <button class="text-white/20 hover:text-white/60 ml-2 text-xs">&times;</button>
+                                </div>
+                                <div class="flex items-center gap-2 px-4 h-9 border-r border-white/[0.04] min-w-fit cursor-pointer hover:bg-white/[0.02]">
+                                    <span class="text-[13px] text-white/40">Bash Shell</span>
+                                    <span class="w-[6px] h-[6px] bg-emerald-400"></span>
+                                </div>
+                            </div>
+
+                            <!-- Breadcrumbs -->
+                            <div class="h-7 bg-[#050505] border-b border-white/[0.04] flex items-center px-4 gap-2 text-[11px] text-white/20">
+                                <span>HarnessRelay</span>
+                                <span class="text-white/10">/</span>
+                                <span>Sessions</span>
+                                <span class="text-white/10">/</span>
+                                <span class="text-white/50">Codex Session</span>
+                                <span class="text-white/10">/</span>
+                                <span class="text-blue-400/60">Chat</span>
+                            </div>
+
+                            <!-- Chat Content -->
+                            <div class="flex-1 overflow-y-auto bg-[#050505] p-6">
+                                <div class="max-w-3xl mx-auto space-y-6">
+                                    <!-- System message block -->
+                                    <div class="border-l-2 border-blue-500/30 bg-blue-500/[0.03] pl-4 pr-4 py-3">
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <span class="text-[10px] font-mono font-bold text-blue-400/60 uppercase tracking-widest">System</span>
+                                            <span class="text-[10px] font-mono text-white/10">09:41:22</span>
+                                        </div>
+                                        <p class="text-[13px] text-white/40 leading-relaxed">Semantic messages will appear here. The complete live screen remains available in Terminal Mode.</p>
+                                    </div>
+
+                                    <!-- User message block -->
+                                    <div class="border-r-2 border-white/10 bg-white/[0.02] pr-4 pl-4 py-3 text-right">
+                                        <div class="flex items-center justify-end gap-2 mb-2">
+                                            <span class="text-[10px] font-mono text-white/10">09:42:07</span>
+                                            <span class="text-[10px] font-mono font-bold text-white/30 uppercase tracking-widest">You</span>
+                                        </div>
+                                        <p class="text-[15px] text-white font-medium leading-relaxed">Refactor the auth middleware to use JWT tokens instead of session cookies.</p>
+                                    </div>
+
+                                    <!-- Assistant message block -->
+                                    <div class="border-l-2 border-blue-500 bg-blue-500/[0.04] pl-4 pr-4 py-3">
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <div class="w-4 h-4 bg-blue-600 flex items-center justify-center text-white text-[8px] font-bold">AI</div>
+                                            <span class="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-widest">Codex</span>
+                                            <span class="text-[10px] font-mono text-white/10">09:42:15</span>
+                                        </div>
+                                        <div class="text-[13px] text-white/60 leading-relaxed space-y-3">
+                                            <p>I'll refactor the auth middleware to use JWT. Starting with the current implementation analysis.</p>
+                                            <div class="border border-white/[0.08] bg-black/40 p-3 font-mono text-[11px] text-white/40 space-y-1">
+                                                <p><span class="text-blue-400">$</span> ls src/middleware/</p>
+                                                <p>auth.js&nbsp;&nbsp;session.js&nbsp;&nbsp;cors.js</p>
+                                                <p><span class="text-blue-400">$</span> cat src/middleware/auth.js | head -20</p>
+                                                <p class="text-white/20">// Current session-based auth implementation</p>
+                                            </div>
+                                            <p>I'll need to install <code class="text-blue-300/70 bg-blue-400/10 px-1 py-0.5 text-[11px] border border-blue-400/20">jsonwebtoken</code> and update the middleware structure.</p>
+                                        </div>
+                                        <!-- Action bar -->
+                                        <div class="flex items-center gap-2 mt-4 pt-3 border-t border-white/[0.06]">
+                                            <button class="h-7 px-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-[11px] font-medium border border-blue-500/30 transition-colors">Approve</button>
+                                            <button class="h-7 px-3 bg-white/[0.03] hover:bg-white/[0.06] text-white/40 text-[11px] font-medium border border-white/[0.08] transition-colors">View in Terminal</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Pending tool call block -->
+                                    <div class="border border-white/[0.06] bg-white/[0.01] pl-4 pr-4 py-3">
+                                        <div class="flex items-center gap-3 mb-3">
+                                            <div class="w-4 h-4 bg-yellow-500/20 border border-yellow-500/30 flex items-center justify-center text-yellow-400 text-[8px] font-bold">!</div>
+                                            <span class="text-[10px] font-mono font-bold text-yellow-400/60 uppercase tracking-widest">Action Required</span>
+                                            <span class="text-[10px] font-mono text-white/10">09:42:18</span>
+                                        </div>
+                                        <p class="text-[13px] text-white/50 mb-3">The agent wants to install <code class="text-yellow-300/60 bg-yellow-400/10 px-1 py-0.5 text-[11px] border border-yellow-400/20">jsonwebtoken</code> via npm.</p>
+                                        <div class="border border-white/[0.06] bg-black/40 p-3 font-mono text-[11px] text-white/40">
+                                            <p><span class="text-yellow-400/60">$</span> npm install jsonwebtoken</p>
+                                        </div>
+                                        <div class="flex items-center gap-2 mt-3">
+                                            <button class="h-8 px-4 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold uppercase tracking-wider transition-colors">Approve</button>
+                                            <button class="h-8 px-4 bg-white/[0.03] hover:bg-white/[0.06] text-white/40 hover:text-white/60 text-[11px] font-medium border border-white/[0.08] transition-colors">Reject</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Composer -->
+                            <div class="bg-[#0a0a0a] border-t border-white/[0.06] px-6 py-4">
+                                <div class="max-w-3xl mx-auto">
+                                    <div class="flex items-end gap-3">
+                                        <button class="w-9 h-9 flex-shrink-0 flex items-center justify-center text-blue-400 font-mono font-bold text-sm border border-white/[0.08] hover:bg-white/[0.03] transition-colors" title="Slash commands">
+                                            /
+                                        </button>
+                                        <div class="flex-1 relative">
+                                            <input type="text" placeholder="Message Codex or type / for commands..." class="w-full h-10 bg-transparent text-[14px] text-white placeholder:text-white/10 focus:outline-none" />
+                                        </div>
+                                        <button class="h-10 px-6 bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-bold uppercase tracking-wider transition-colors">
+                                            Send
+                                        </button>
+                                    </div>
+                                    <div class="flex items-center justify-between mt-2">
+                                        <div class="flex items-center gap-3">
+                                            <span class="text-[10px] font-mono text-white/10">Model: gpt-4</span>
+                                            <span class="text-[10px] font-mono text-white/10">|</span>
+                                            <span class="text-[10px] font-mono text-white/10">Context: project-alpha</span>
+                                        </div>
+                                        <span class="text-[10px] font-mono text-white/10 uppercase tracking-wider">Enter to send &middot; Shift+Enter newline</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Status Bar -->
+                            <div class="h-[22px] bg-[#0a0a0a] border-t border-white/[0.06] flex items-center justify-between px-3 text-[11px]">
+                                <div class="flex items-center gap-4">
+                                    <span class="flex items-center gap-1.5 text-emerald-400/60">
+                                        <span class="w-[6px] h-[6px] bg-emerald-400"></span>
+                                        <span class="font-mono">Connected</span>
+                                    </span>
+                                    <span class="text-white/10">|</span>
+                                    <span class="font-mono text-white/20">127.0.0.1:8080</span>
+                                    <span class="text-white/10">|</span>
+                                    <span class="font-mono text-white/20">2 sessions</span>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <span class="font-mono text-white/20">UTF-8</span>
+                                    <span class="font-mono text-white/20">HarnessRelay v1.0.0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Tool Window (Event Inspector toggle area) -->
+                        <div class="w-8 bg-[#0a0a0a] border-l border-white/[0.06] flex flex-col items-center py-2 z-10 flex-shrink-0">
+                            <div class="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white/60 cursor-pointer transition-colors" title="Event Inspector">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Comparison Table -->
+        <section class="bg-slate-900/50 border border-slate-800 rounded-2xl p-8">
+            <h2 class="text-2xl font-bold text-white mb-6">Iteration Comparison Matrix</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs text-slate-400 uppercase bg-slate-800/50">
+                        <tr>
+                            <th class="px-4 py-3 rounded-l-lg">Feature</th>
+                            <th class="px-4 py-3">JetBrains Gradient</th>
+                            <th class="px-4 py-3">Minimal Noir</th>
+                            <th class="px-4 py-3 rounded-r-lg">Gradient Noir</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-slate-300">
+                        <tr class="border-b border-slate-800">
+                            <td class="px-4 py-3 font-medium text-white">Background</td>
+                            <td class="px-4 py-3">Vibrant blue gradient</td>
+                            <td class="px-4 py-3">Pure black (#000000)</td>
+                            <td class="px-4 py-3">Black with blue gradient hero</td>
+                        </tr>
+                        <tr class="border-b border-slate-800">
+                            <td class="px-4 py-3 font-medium text-white">Border Radius</td>
+                            <td class="px-4 py-3">Pill / full rounded</td>
+                            <td class="px-4 py-3">0px (sharp)</td>
+                            <td class="px-4 py-3">0px (sharp)</td>
+                        </tr>
+                        <tr class="border-b border-slate-800">
+                            <td class="px-4 py-3 font-medium text-white">Typography</td>
+                            <td class="px-4 py-3">Ultra-bold, centered</td>
+                            <td class="px-4 py-3">Scale-based, Swiss grid</td>
+                            <td class="px-4 py-3">Bold + scale hierarchy</td>
+                        </tr>
+                        <tr class="border-b border-slate-800">
+                            <td class="px-4 py-3 font-medium text-white">Primary CTA</td>
+                            <td class="px-4 py-3">White pill on blue</td>
+                            <td class="px-4 py-3">White square icon</td>
+                            <td class="px-4 py-3">Blue sharp rectangle</td>
+                        </tr>
+                        <tr class="border-b border-slate-800">
+                            <td class="px-4 py-3 font-medium text-white">Decorations</td>
+                            <td class="px-4 py-3">Glows, shadows, blur</td>
+                            <td class="px-4 py-3">None</td>
+                            <td class="px-4 py-3">Gradient only, no shadows</td>
+                        </tr>
+                        <tr>
+                            <td class="px-4 py-3 font-medium text-white">Best For</td>
+                            <td class="px-4 py-3">Enterprise landing</td>
+                            <td class="px-4 py-3">Brutalist dev tools</td>
+                            <td class="px-4 py-3">Premium minimal product</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Implementation Notes -->
+        <section class="bg-slate-900/50 border border-slate-800 rounded-2xl p-8">
+            <h2 class="text-2xl font-bold text-white mb-6">Implementation Notes</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 text-sm text-slate-400">
+                <div>
+                    <h3 class="text-white font-semibold mb-3">Global Recommendations</h3>
+                    <ul class="space-y-2 list-disc list-inside">
+                        <li>All iterations maintain a <strong>dark-first</strong> color scheme suitable for long terminal sessions.</li>
+                        <li><strong>Inter</strong> is used for UI text; <strong>JetBrains Mono</strong> for code, terminal, and metadata.</li>
+                        <li>Keep the current <code>ViewMode</code> toggle (Chat / Terminal) consistent across all designs.</li>
+                        <li>The <strong>Event Inspector</strong> should slide in as a right panel or overlay in all variants.</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-white font-semibold mb-3">Accessibility &amp; Performance</h3>
+                    <ul class="space-y-2 list-disc list-inside">
+                        <li>Ensure all gradients respect <code>prefers-reduced-motion</code>.</li>
+                        <li>Maintain WCAG 2.1 AA contrast ratios; Minimal Noir requires careful attention to text contrast.</li>
+                        <li>Sidebar should be collapsible on screens &lt; 1024px across all iterations.</li>
+                        <li>Gradient Noir uses CSS gradients only &mdash; no backdrop-filter or blur for maximum performance.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="border-t border-slate-800 py-8 mt-12">
+        <div class="max-w-7xl mx-auto px-6 text-center text-xs text-slate-500">
+            <p>HarnessRelay Design Directives &middot; Iterations 2, 3, and Gradient Noir</p>
+        </div>
+    </footer>
+
+</body>
+</html>
