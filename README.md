@@ -240,6 +240,124 @@ Use that token to log into the local dashboard. Keep it private. It grants local
 export HARNESSRELAY_TOKEN=...
 ```
 
+## Configuration
+
+HarnessRelay uses XDG-resolved paths for config, data, and state. The default config directory is `~/.config/harnessrelay/`.
+
+### Config files
+
+| File | Purpose |
+|---|---|
+| `~/.config/harnessrelay/interceptor.toml` | Daemon config (bind address, port, allowlist behavior). |
+| `~/.config/harnessrelay/allowed_ips.txt` | Optional IP allowlist for non-local binds. |
+| `~/.config/harnessrelay/token` | Stable local auth token. Keep secret. |
+
+### `interceptor.toml` keys
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `bind_address` | string | `127.0.0.1` | Interface to bind. Use `"0.0.0.0"` for all interfaces. Non-local requires explicit allow. |
+| `port` | int | `8765` | HTTP server port. |
+| `allowlist_permits_nonlocal_bind` | bool | `true` | When `true`, a non-empty `allowed_ips.txt` satisfies the non-local bind safety check without needing `HARNESSRELAY_ALLOW_NONLOCAL_BIND=1`. |
+
+Example `interceptor.toml`:
+
+```toml
+bind_address = "0.0.0.0"
+port = 8765
+allowlist_permits_nonlocal_bind = true
+```
+
+### `allowed_ips.txt` format
+
+- One IP address or CIDR range per line.
+- Supports IPv4 and IPv6.
+- Blank lines and `#` comments are ignored.
+- Malformed lines are silently skipped at startup.
+
+Example `allowed_ips.txt`:
+
+```text
+# Local network
+192.168.1.0/24
+
+# Specific device
+192.168.1.104
+
+# IPv6 localhost
+::1
+```
+
+### Environment variables
+
+**Daemon / Network**
+
+| Variable | Description |
+|---|---|
+| `HARNESSRELAY_BIND_ADDRESS` | Override `bind_address` (e.g. `0.0.0.0`). |
+| `HARNESSRELAY_PORT` | Override `port` (e.g. `8765`). |
+| `HARNESSRELAY_ALLOW_NONLOCAL_BIND` | Set to `1` to permit non-local bind without an allowlist. |
+| `HARNESSRELAY_ALLOW_ROOT_FOR_TESTING` | Set to `1` to allow running as root (testing only). |
+
+**Authentication**
+
+| Variable | Description |
+|---|---|
+| `HARNESSRELAY_TOKEN` | Overrides the installed `~/.config/harnessrelay/token`. |
+
+**CLI / Shim**
+
+| Variable | Description |
+|---|---|
+| `HARNESSRELAY_ADDR` | `harnessctl` daemon URL (default `http://127.0.0.1:8765`). |
+| `HARNESSRELAY_BYPASS` | Set to `1` to skip shims and run the real harness binary directly. |
+| `HARNESSRELAY_BIN_DIR` | Override the binary install directory. |
+| `HARNESSRELAY_SHIMS_CONFIG` | Override the shim config file path. |
+| `HARNESSRELAY_SHIMS_DIR` | Override the shim directory path. |
+
+**Service (advanced)**
+
+| Variable | Description |
+|---|---|
+| `HARNESSRELAY_DAEMON_BINARY` | Override the `harnessd` binary path used by service commands. |
+| `HARNESSRELAY_SERVICE_UNIT_PATH` | Override the systemd unit file path. |
+| `HARNESSRELAY_SYSTEMCTL` | Override the `systemctl` command path. |
+| `HARNESSRELAY_JOURNALCTL` | Override the `journalctl` command path. |
+
+### Remote / LAN access
+
+By default the daemon binds to `127.0.0.1` and is unreachable from other devices.
+
+To expose the dashboard on your LAN:
+
+1. Set `bind_address = "0.0.0.0"` in `interceptor.toml` (or set `HARNESSRELAY_BIND_ADDRESS=0.0.0.0`).
+2. Create `~/.config/harnessrelay/allowed_ips.txt` and add the IPs or CIDR ranges you trust.
+3. Restart the daemon.
+
+When `allowed_ips.txt` is non-empty and `allowlist_permits_nonlocal_bind` is `true` (default), the daemon accepts non-local binds automatically. If you prefer to skip the allowlist and accept the risk, set `HARNESSRELAY_ALLOW_NONLOCAL_BIND=1`.
+
+Keep your token secret: LAN exposure means anyone who can reach the port must also authenticate with the token. Prefer VPN or SSH tunnel over public internet exposure.
+
+### Restarting after config changes
+
+Config files are read once at startup. There is no hot reload. After editing `interceptor.toml` or `allowed_ips.txt`, restart the daemon.
+
+**If running as a systemd user service:**
+
+```bash
+harnessctl services restart
+```
+
+**If running manually:**
+
+Stop the running `harnessd serve` process with `Ctrl-C`, then start it again:
+
+```bash
+harnessd serve
+```
+
+Note: session and event history are kept in memory. Restarting the daemon clears all active sessions and their history. This is a current limitation.
+
 ## Quick start
 
 This is the normal Linux path with the user service and a Codex shim:

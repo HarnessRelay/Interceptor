@@ -77,20 +77,28 @@ func serve() error {
 	}
 	auth := security.NewAuthenticator(authToken)
 	if !security.IsLocalBind(cfg.Address()) {
-		logger.Warn("harnessd binding outside localhost; remote access can control terminal sessions",
-			slog.String("bind_address", cfg.BindAddress),
-			slog.Int("port", cfg.Port),
-		)
+		if len(cfg.AllowedIPs) > 0 {
+			logger.Info("harnessd binding outside localhost with IP allowlist enforced",
+				slog.String("bind_address", cfg.BindAddress),
+				slog.Int("allowed_entries", len(cfg.AllowedIPs)),
+			)
+		} else {
+			logger.Warn("harnessd binding outside localhost; remote access can control terminal sessions",
+				slog.String("bind_address", cfg.BindAddress),
+				slog.Int("port", cfg.Port),
+			)
+		}
 	}
 
 	router := api.NewRouter(api.Options{
-		Logger:    logger,
-		Version:   version,
-		StaticFS:  dashboardFS(),
-		Sessions:  sessions,
-		Events:    bus,
-		Auth:      auth,
-		Harnesses: harnesses,
+		Logger:     logger,
+		Version:    version,
+		StaticFS:   dashboardFS(),
+		Sessions:   sessions,
+		Events:     bus,
+		Auth:       auth,
+		Harnesses:  harnesses,
+		AllowedIPs: cfg.AllowedIPs,
 	})
 
 	server := &http.Server{
@@ -111,6 +119,7 @@ func serve() error {
 			slog.String("config_format", config.Format),
 			slog.Int64("terminal_history_limit_bytes", cfg.Terminal.HistoryLimitBytes),
 			slog.Int("detected_harnesses", len(harnesses)),
+			slog.Int("allowed_ips", len(cfg.AllowedIPs)),
 		)
 		errCh <- server.ListenAndServe()
 	}()

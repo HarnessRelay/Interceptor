@@ -22,6 +22,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/harnessrelay/interceptor/internal/config"
 	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/security"
@@ -52,6 +53,92 @@ func TestHealthEndpoint(t *testing.T) {
 	want := `{"status":"ok","service":"harnessd","version":"test-version"}`
 	if strings.TrimSpace(rec.Body.String()) != want {
 		t.Fatalf("body = %q, want %q", strings.TrimSpace(rec.Body.String()), want)
+	}
+}
+
+func TestIPAllowlistMiddleware(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	makeReq := func(remoteAddr string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req.RemoteAddr = remoteAddr
+		return req
+	}
+
+	tests := []struct {
+		name       string
+		allowed    []config.AllowedIP
+		remoteAddr string
+		wantStatus int
+	}{
+		{
+			name:       "no allowlist allows all",
+			allowed:    nil,
+			remoteAddr: "192.168.1.5:12345",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "single IP match",
+			allowed: []config.AllowedIP{
+				{IP: net.ParseIP("192.168.1.5"), CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: net.CIDRMask(32, 32)}},
+			},
+			remoteAddr: "192.168.1.5:12345",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "single IP mismatch",
+			allowed: []config.AllowedIP{
+				{IP: net.ParseIP("192.168.1.5"), CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: net.CIDRMask(32, 32)}},
+			},
+			remoteAddr: "192.168.1.6:12345",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "CIDR match",
+			allowed: []config.AllowedIP{
+				{CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.0"), Mask: net.CIDRMask(24, 32)}},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "CIDR mismatch",
+			allowed: []config.AllowedIP{
+				{CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.0"), Mask: net.CIDRMask(24, 32)}},
+			},
+			remoteAddr: "192.168.2.100:12345",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "IPv6 match",
+			allowed: []config.AllowedIP{
+				{IP: net.ParseIP("::1"), CIDR: &net.IPNet{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)}},
+			},
+			remoteAddr: "[::1]:12345",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "IPv6 mismatch",
+			allowed: []config.AllowedIP{
+				{IP: net.ParseIP("::1"), CIDR: &net.IPNet{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)}},
+			},
+			remoteAddr: "[::2]:12345",
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := ipAllowlistMiddleware(tt.allowed, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			rec := httptest.NewRecorder()
+			req := makeReq(tt.remoteAddr)
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+		})
 	}
 }
 

@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/harnessrelay/interceptor/internal/config"
 	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/logging"
@@ -22,14 +24,15 @@ import (
 )
 
 type Options struct {
-	Logger    *slog.Logger
-	Version   string
-	StaticFS  fs.FS
-	Sessions  *session.Manager
-	Events    *events.Bus
-	Auth      *security.Authenticator
-	Audit     *storage.AuditLog
-	Harnesses []harness.Detected
+	Logger     *slog.Logger
+	Version    string
+	StaticFS   fs.FS
+	Sessions   *session.Manager
+	Events     *events.Bus
+	Auth       *security.Authenticator
+	Audit      *storage.AuditLog
+	Harnesses  []harness.Detected
+	AllowedIPs []config.AllowedIP
 }
 
 type healthResponse struct {
@@ -262,7 +265,11 @@ func NewRouter(opts Options) http.Handler {
 	})
 	mux.Handle("/", http.FileServerFS(opts.StaticFS))
 
-	return requestLogMiddleware(opts.Logger, mux)
+	handler := requestLogMiddleware(opts.Logger, mux)
+	if len(opts.AllowedIPs) > 0 {
+		handler = ipAllowlistMiddleware(opts.AllowedIPs, opts.Logger)(handler)
+	}
+	return handler
 }
 
 func (opts Options) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -976,6 +983,41 @@ func parseUintQuery(r *http.Request, key string) (uint64, error) {
 		return 0, fmt.Errorf("%s must be an unsigned integer", key)
 	}
 	return parsed, nil
+}
+
+func ipAllowlistMiddleware(allowed []config.AllowedIP, logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if len(allowed) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				host = r.RemoteAddr
+			}
+			clientIP := net.ParseIP(host)
+			if clientIP == nil {
+				writeError(w, http.StatusForbidden, "client IP not allowed")
+				return
+			}
+			for _, entry := range allowed {
+				if entry.CIDR != nil && entry.CIDR.Contains(clientIP) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if entry.IP != nil && entry.IP.Equal(clientIP) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			logger.Warn("client IP not allowed",
+				slog.String("client_ip", clientIP.String()),
+				slog.String("path", r.URL.Path),
+			)
+			writeError(w, http.StatusForbidden, "client IP not allowed")
+		})
+	}
 }
 
 func requestLogMiddleware(logger *slog.Logger, next http.Handler) http.Handler {

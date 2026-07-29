@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,6 +115,7 @@ func TestResolveAuthTokenMissing(t *testing.T) {
 }
 
 func TestLoadRejectsNonLocalBindWithoutExplicitAllow(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "0.0.0.0")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load accepted non-local bind without explicit allow")
@@ -121,6 +123,7 @@ func TestLoadRejectsNonLocalBindWithoutExplicitAllow(t *testing.T) {
 }
 
 func TestLoadAllowsExplicitNonLocalBind(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "0.0.0.0")
 	t.Setenv("HARNESSRELAY_ALLOW_NONLOCAL_BIND", "1")
 	cfg, err := Load()
@@ -152,5 +155,138 @@ func TestSearchPathsIncludesFutureTOMLLocations(t *testing.T) {
 	}
 	if Format != "toml" {
 		t.Fatalf("Format = %q, want toml", Format)
+	}
+}
+
+func TestLoadAllowedIPs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	path, err := AllowedIPsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := "# comment\n192.168.1.5\n192.168.2.0/24\n::1\n2001:db8::/32\n\ninvalid-line\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	allowed, err := loadAllowedIPs()
+	if err != nil {
+		t.Fatalf("loadAllowedIPs: %v", err)
+	}
+	if len(allowed) != 4 {
+		t.Fatalf("loaded %d entries, want 4", len(allowed))
+	}
+
+	if allowed[0].IP == nil || !allowed[0].IP.Equal(net.ParseIP("192.168.1.5")) {
+		t.Fatalf("first entry IP = %v", allowed[0].IP)
+	}
+	if allowed[0].CIDR == nil || !allowed[0].CIDR.Contains(net.ParseIP("192.168.1.5")) {
+		t.Fatal("first entry missing valid CIDR")
+	}
+
+	if allowed[1].CIDR == nil || !allowed[1].CIDR.Contains(net.ParseIP("192.168.2.100")) {
+		t.Fatalf("second entry CIDR = %v", allowed[1].CIDR)
+	}
+
+	if allowed[2].IP == nil || !allowed[2].IP.Equal(net.ParseIP("::1")) {
+		t.Fatalf("third entry IP = %v", allowed[2].IP)
+	}
+
+	if allowed[3].CIDR == nil || !allowed[3].CIDR.Contains(net.ParseIP("2001:db8::1")) {
+		t.Fatalf("fourth entry CIDR = %v", allowed[3].CIDR)
+	}
+}
+
+func TestLoadAllowlistPermitsNonLocalBind(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "")
+	t.Setenv("HARNESSRELAY_ALLOW_NONLOCAL_BIND", "")
+
+	cfgPath := filepath.Join(root, "harnessrelay", "interceptor.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("bind_address = \"0.0.0.0\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ipsPath := filepath.Join(root, "harnessrelay", "allowed_ips.txt")
+	if err := os.WriteFile(ipsPath, []byte("192.168.1.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with default allowlist_permits_nonlocal_bind: %v", err)
+	}
+	if !cfg.AllowlistPermitsNonLocalBind {
+		t.Fatal("AllowlistPermitsNonLocalBind should default to true")
+	}
+
+	if err := os.WriteFile(cfgPath, []byte("bind_address = \"0.0.0.0\"\nallowlist_permits_nonlocal_bind = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Load()
+	if err == nil {
+		t.Fatal("Load should fail when allowlist_permits_nonlocal_bind = false and no env var")
+	}
+}
+
+func TestLoadAllowlistReplacesEnvVar(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "")
+	t.Setenv("HARNESSRELAY_ALLOW_NONLOCAL_BIND", "")
+
+	cfgPath := filepath.Join(root, "harnessrelay", "interceptor.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("bind_address = \"0.0.0.0\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ipsPath := filepath.Join(root, "harnessrelay", "allowed_ips.txt")
+	if err := os.WriteFile(ipsPath, []byte("192.168.1.0/24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BindAddress != "0.0.0.0" {
+		t.Fatalf("BindAddress = %q, want 0.0.0.0", cfg.BindAddress)
+	}
+	if len(cfg.AllowedIPs) != 1 {
+		t.Fatalf("AllowedIPs = %d, want 1", len(cfg.AllowedIPs))
+	}
+}
+
+func TestLoadAllowlistDoesNotReplaceEnvVarWhenDisabled(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HARNESSRELAY_BIND_ADDRESS", "")
+	t.Setenv("HARNESSRELAY_ALLOW_NONLOCAL_BIND", "")
+
+	cfgPath := filepath.Join(root, "harnessrelay", "interceptor.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("bind_address = \"0.0.0.0\"\nallowlist_permits_nonlocal_bind = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ipsPath := filepath.Join(root, "harnessrelay", "allowed_ips.txt")
+	if err := os.WriteFile(ipsPath, []byte("192.168.1.0/24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load should fail when allowlist_permits_nonlocal_bind = false")
 	}
 }
