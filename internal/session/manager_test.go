@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/harnessrelay/interceptor/internal/events"
+	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/harness/fakesemantic"
 	"github.com/harnessrelay/interceptor/internal/harness/generic"
+	"github.com/harnessrelay/interceptor/internal/harness/opencode"
 )
 
 func fixturePath(t *testing.T, name string) string {
@@ -635,7 +637,7 @@ func TestManagerOpenCodeAdapterSemanticFlow(t *testing.T) {
 	}
 
 	output := sess.Subscribe()
-	readUntil(t, output, "█▀▀█", 5*time.Second)
+	readUntil(t, output, "Ask anything", 5*time.Second)
 	waitForHistoryEvent(t, bus, sess.ID, events.TypeChatSystemMessage, 5*time.Second)
 	waitForHistoryEvent(t, bus, sess.ID, events.TypeTerminalNoisyOutput, 5*time.Second)
 	metadata := waitForHarnessMetadataModel(t, bus, sess.ID, "gpt-fake-model", 5*time.Second)
@@ -680,7 +682,7 @@ func TestManagerOpenCodeApprovalFlow(t *testing.T) {
 	})
 
 	output := sess.Subscribe()
-	readUntil(t, output, "█▀▀█", 5*time.Second)
+	readUntil(t, output, "Ask anything", 5*time.Second)
 	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
 
 	if err := mgr.SubmitPrompt(sess.ID, "run echo hello"); err != nil {
@@ -713,6 +715,182 @@ func TestManagerOpenCodeApprovalFlow(t *testing.T) {
 	if data := resolved.Data.(events.ApprovalResolved); data.ApprovalEventID != approval.ID || data.Resolution != "approved" {
 		t.Fatalf("approval.resolved = %+v", data)
 	}
+}
+
+func TestIntegrationOpenCodeQuestionResponse(t *testing.T) {
+	if os.Getenv("OPENCODE_INTEGRATION") != "1" {
+		t.Skip("Set OPENCODE_INTEGRATION=1 to run real OpenCode integration tests")
+	}
+	bus := events.NewBus()
+	registry := harness.NewRegistry(opencode.New(), generic.New())
+	mgr := NewManagerWithRegistry(bus, registry)
+
+	workDir := t.TempDir()
+	freshData := t.TempDir()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "real-opencode",
+		Command: "opencode",
+		WorkDir: workDir,
+		Env:     []string{"XDG_DATA_HOME=" + freshData},
+		Rows:    40,
+		Cols:    120,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning && sess.status() != StatusStarting {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	output := sess.Subscribe()
+	t.Log("Waiting for OpenCode TUI...")
+	readUntil(t, output, "█▀▀█", 15*time.Second)
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 15*time.Second)
+
+	t.Log("Submitting prompt...")
+	if err := mgr.SubmitPrompt(sess.ID, "Say exactly: Hello World"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+
+	t.Log("Waiting for assistant response...")
+	deadline := time.Now().Add(120 * time.Second)
+	var response string
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sess.ID, 0, 1024) {
+			if event.Type != events.TypeChatAssistantMessage {
+				continue
+			}
+			msg, ok := event.Data.(events.ChatMessage)
+			if ok && msg.Content != "" && !isTransientContent(msg.Content) {
+				response = msg.Content
+			}
+		}
+		if response != "" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if response == "" {
+		t.Fatal("timed out waiting for assistant response")
+	}
+	t.Logf("Response: %q", response)
+
+	if strings.Contains(response, "▀") {
+		t.Errorf("response contains separator: %q", response)
+	}
+	if strings.Contains(response, "Build") || strings.Contains(response, "Plan") {
+		t.Errorf("response contains status bar: %q", response)
+	}
+	if strings.Contains(response, "Ask anything") {
+		t.Errorf("response contains input placeholder: %q", response)
+	}
+	if strings.TrimSpace(response) == "" {
+		t.Fatal("assistant response is empty")
+	}
+}
+
+func TestIntegrationOpenCodePermissionPrompt(t *testing.T) {
+	if os.Getenv("OPENCODE_INTEGRATION") != "1" {
+		t.Skip("Set OPENCODE_INTEGRATION=1 to run real OpenCode integration tests")
+	}
+	bus := events.NewBus()
+	registry := harness.NewRegistry(opencode.New(), generic.New())
+	mgr := NewManagerWithRegistry(bus, registry)
+
+	workDir := t.TempDir()
+	freshData := t.TempDir()
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "real-opencode-perm",
+		Command: "opencode",
+		WorkDir: workDir,
+		Env:     []string{"XDG_DATA_HOME=" + freshData},
+		Rows:    40,
+		Cols:    120,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning && sess.status() != StatusStarting {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	output := sess.Subscribe()
+	t.Log("Waiting for OpenCode TUI...")
+	readUntil(t, output, "█▀▀█", 15*time.Second)
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 15*time.Second)
+
+	t.Log("Submitting permission-triggering prompt...")
+	if err := mgr.SubmitPrompt(sess.ID, "Create a file named test-integration.txt with the content hello"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+
+	t.Log("Waiting for approval event...")
+	deadline := time.Now().Add(60 * time.Second)
+	var approvalEvent events.Event
+	var approval events.ApprovalRequired
+	for time.Now().Before(deadline) {
+		for _, event := range bus.History(sess.ID, 0, 1024) {
+			if event.Type != events.TypeApprovalRequired {
+				continue
+			}
+			if a, ok := event.Data.(events.ApprovalRequired); ok {
+				approvalEvent = event
+				approval = a
+			}
+		}
+		if approval.OperationKind != "" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if approval.OperationKind == "" {
+		t.Fatal("timed out waiting for approval event")
+	}
+	t.Logf("Approval: kind=%q tool=%q cmd=%q", approval.OperationKind, approval.ToolName, approval.Command)
+
+	if len(approval.Actions) < 3 {
+		t.Fatalf("expected at least 3 actions, got %d: %+v", len(approval.Actions), approval.Actions)
+	}
+	foundAllow := false
+	foundDeny := false
+	for _, action := range approval.Actions {
+		if action.ID == "opencode.approval_allow" {
+			foundAllow = true
+		}
+		if action.ID == "opencode.approval_deny" {
+			foundDeny = true
+		}
+	}
+	if !foundAllow || !foundDeny {
+		t.Fatalf("missing expected actions: allow=%v deny=%v", foundAllow, foundDeny)
+	}
+
+	// Approve and verify
+	t.Log("Approving...")
+	if err := mgr.ExecuteAction(sess.ID, approvalEvent.ID, "opencode.approval_allow"); err != nil {
+		t.Fatalf("ExecuteAction: %v", err)
+	}
+
+	waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalResolved, 10*time.Second)
+	t.Log("PASS: Permission prompt detected and approved")
+}
+
+func isTransientContent(content string) bool {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	return lower == "" ||
+		strings.HasPrefix(lower, "thinking") ||
+		strings.HasPrefix(lower, "writing") ||
+		strings.Contains(lower, "esc to interrupt")
 }
 
 func TestManagerInterrupt(t *testing.T) {

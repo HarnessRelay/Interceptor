@@ -2,8 +2,10 @@ package opencode
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
+	xterm "github.com/gitpod-io/xterm-go"
 	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/harness"
 )
@@ -355,6 +357,119 @@ func TestCommandDiscovery(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected test-command to be discovered")
+	}
+}
+
+func TestExtractResponseFromRealOpenCodeScreen(t *testing.T) {
+	// Real OpenCode v1.18.3 layout: assistant responses are OUTSIDE borders.
+	screen := xterm.New(xterm.WithRows(40), xterm.WithCols(120), xterm.WithScrollback(2000))
+	lines := []string{
+		"\x1b[2;1H  ┃  hello\x1b[K",                                      // user prompt (bordered)
+		"\x1b[5;1H     + Thought: 24ms\x1b[K",                            // thinking indicator
+		"\x1b[7;1H     Here is the answer to your question.\x1b[K",       // response (no border!)
+		"\x1b[8;1H     It contains multiple paragraphs.\x1b[K",           // response continuation
+		"\x1b[10;1H     ▣  Build · Kimi K2.6 · 3.4s\x1b[K",               // model footer with timing
+		"\x1b[33;1H  ┃ \x1b[K",                                           // input area
+		"\x1b[36;1H  ┃  Build · Kimi K2.6 Canopy Wave Coding Plan\x1b[K", // status bar in input
+		"\x1b[37;1H  ╹" + repeat("▀", 118),                               // separator
+		"\x1b[38;1H   /tmp/project   ctrl+p commands\x1b[K",              // footer
+	}
+	for _, line := range lines {
+		_, _ = screen.Write([]byte(line))
+	}
+	response := extractAssistantResponse(screen, "hello")
+	expected := "Here is the answer to your question.\nIt contains multiple paragraphs."
+	if response != expected {
+		t.Fatalf("extracted response = %q, want %q", response, expected)
+	}
+}
+
+func TestExtractResponseDoesNotIncludeStatusBar(t *testing.T) {
+	screen := xterm.New(xterm.WithRows(40), xterm.WithCols(80), xterm.WithScrollback(2000))
+	lines := []string{
+		"\x1b[2;1H  ┃  explain the codebase\x1b[K",
+		"\x1b[5;1H     + Thought: 100ms\x1b[K",
+		"\x1b[7;1H     The project is a relay layer.\x1b[K",
+		"\x1b[8;1H     It uses adapters to parse harness-specific output.\x1b[K",
+		"\x1b[10;1H     ▣  Build · gpt-5.6-sol high · 2.1s\x1b[K",
+		"\x1b[33;1H  ┃ \x1b[K",
+		"\x1b[36;1H  ┃  Build · gpt-5.6-sol high\x1b[K",
+		"\x1b[37;1H  ╹" + repeat("▀", 78),
+	}
+	for _, line := range lines {
+		_, _ = screen.Write([]byte(line))
+	}
+	response := extractAssistantResponse(screen, "explain the codebase")
+	if bytes.Contains([]byte(response), []byte("Build")) {
+		t.Fatalf("response contains status bar: %q", response)
+	}
+	if bytes.Contains([]byte(response), []byte("▀")) {
+		t.Fatalf("response contains separator: %q", response)
+	}
+	expected := "The project is a relay layer.\nIt uses adapters to parse harness-specific output."
+	if response != expected {
+		t.Fatalf("response = %q, want %q", response, expected)
+	}
+}
+
+func TestExtractResponseFromWrappedLines(t *testing.T) {
+	screen := xterm.New(xterm.WithRows(30), xterm.WithCols(80), xterm.WithScrollback(2000))
+	lines := []string{
+		"\x1b[2;1H  ┃  hi\x1b[K",
+		"\x1b[7;1H     This is a long response that wraps across\x1b[K",
+		"\x1b[8;1H     multiple lines in the terminal.\x1b[K",
+		"\x1b[10;1H     ▣  Build · model · 1.0s\x1b[K",
+		"\x1b[37;1H  ╹" + repeat("▀", 78),
+	}
+	for _, line := range lines {
+		_, _ = screen.Write([]byte(line))
+	}
+	response := extractAssistantResponse(screen, "hi")
+	expected := "This is a long response that wraps across\nmultiple lines in the terminal."
+	if response != expected {
+		t.Fatalf("response = %q, want %q", response, expected)
+	}
+}
+
+func TestExtractResponseSkipsActivityIndicator(t *testing.T) {
+	screen := xterm.New(xterm.WithRows(30), xterm.WithCols(80), xterm.WithScrollback(2000))
+	lines := []string{
+		"\x1b[2;1H  ┃  hello\x1b[K",
+		"\x1b[5;1H     + Thought: 50ms\x1b[K",
+		"\x1b[7;1H     Done.\x1b[K",
+		"\x1b[10;1H     ▣  Build · model · 0.5s\x1b[K",
+	}
+	for _, line := range lines {
+		_, _ = screen.Write([]byte(line))
+	}
+	response := extractAssistantResponse(screen, "hello")
+	if response != "Done." {
+		t.Fatalf("response = %q, want %q", response, "Done.")
+	}
+}
+
+func repeat(s string, n int) string {
+	result := ""
+	for i := 0; i < n; i++ {
+		result += s
+	}
+	return result
+}
+
+func dumpScreenForTest(t *testing.T, term *xterm.Terminal) {
+	t.Helper()
+	buffer := term.Buffer()
+	for i := 0; i < buffer.Lines.Length(); i++ {
+		line := buffer.Lines.Get(i)
+		if line == nil {
+			continue
+		}
+		text := line.TranslateToString(true, 0, -1)
+		wrapped := ""
+		if line.IsWrapped {
+			wrapped = " [W]"
+		}
+		fmt.Printf("  [%2d] %q%s\n", i, text, wrapped)
 	}
 }
 

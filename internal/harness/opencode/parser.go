@@ -2,6 +2,8 @@ package opencode
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -19,11 +21,11 @@ var (
 	keyboardPattern = regexp.MustCompile(`\x1b\[([><=])([0-9]*)u`)
 
 	// OpenCode-specific patterns
-	opencodeBanner      = "▄"
-	opencodeBannerRight = "█▀▀█ █▀▀█"
+	opencodeBanner          = "▄"
+	opencodeBannerRight     = "█▀▀█ █▀▀█"
 	permissionHeaderPattern = regexp.MustCompile(`(?i)[▲△⚠]\s*Permission\s*required`)
-	permissionToolLine      = regexp.MustCompile(`(?m)(?:[┃╹]\s*)?#\s*(.+)$`)
-	permissionCmdLine       = regexp.MustCompile(`(?m)(?:[┃╹]\s*)?\$\s*(.+)$`)
+	permissionToolLine      = regexp.MustCompile(`(?m)(?:[┃╹│]\s*)?#\s+(.+?)(?:\s*$|\s+\$\s|\s+#\s|\s+Allow|\s+Reject)`)
+	permissionCmdLine       = regexp.MustCompile(`(?m)(?:[┃╹│]\s*)?\$\s+(.+?)(?:\s*$|\s+#\s|\s+Allow|\s+Reject|\s+enter)`)
 	allowOnceText           = "Allow once"
 	allowAlwaysText         = "Allow always"
 	rejectText              = "Reject"
@@ -32,7 +34,8 @@ var (
 	writingText             = "Writing command"
 	interruptText           = "esc interrupt"
 	askAnythingPrefix       = "Ask anything..."
-	modelFooterPattern      = regexp.MustCompile(`(?m)(?:[┃╹■]\s*)?(?:Build|Plan)\s*·\s*(.+)$`)
+	modelFooterPattern      = regexp.MustCompile(`(?:[┃╹■]\s*)?(?:Build|Plan)\s*[·•\-]?\s*(\S+(?:[ \t]{1,3}\S+)*)`)
+	separatorPattern        = regexp.MustCompile(`^▀+$`)
 )
 
 // Parser keeps duplicate-suppression state for one OpenCode session.
@@ -589,13 +592,7 @@ func extractAssistantResponse(term *xterm.Terminal, prompt string) string {
 func assistantResponseAfter(lines []string, promptIndex int) string {
 	assistantIndex := -1
 	for index := promptIndex + 1; index < len(lines); index++ {
-		content, ok := borderedContent(lines[index])
-		if !ok {
-			continue
-		}
-		innerText := stripBorder(content)
-		innerText = stripSidebar(innerText)
-		trimmed := strings.TrimSpace(innerText)
+		trimmed := cleanLine(lines[index])
 		if trimmed == "" || isSidebarContent(trimmed) {
 			continue
 		}
@@ -606,8 +603,16 @@ func assistantResponseAfter(lines []string, promptIndex int) string {
 		if strings.Contains(trimmed, allowOnceText) || strings.Contains(trimmed, allowAlwaysText) || strings.Contains(trimmed, rejectText) {
 			continue
 		}
-		// Skip "Thought" / "Thinking" indicators (OpenCode shows + Thought: Nms)
+		// Skip "Thought" / "Thinking" indicators
 		if strings.Contains(trimmed, thinkingText) || strings.Contains(trimmed, thoughtText) || strings.Contains(trimmed, interruptText) {
+			continue
+		}
+		// Skip model footer variants with timing (▣ Build · Kimi K2.6 · 3.4s)
+		if strings.Contains(trimmed, "▣") && (strings.Contains(trimmed, "Build") || strings.Contains(trimmed, "Plan")) {
+			continue
+		}
+		// Skip activity indicators with leading + (+ Thought: 24ms)
+		if strings.HasPrefix(trimmed, "+") && (strings.Contains(trimmed, "Thought") || strings.Contains(trimmed, "Thinking")) {
 			continue
 		}
 		// Found a non-empty content line after the prompt - this is the response start
@@ -620,32 +625,47 @@ func assistantResponseAfter(lines []string, promptIndex int) string {
 
 	var output []string
 	for index := assistantIndex; index < len(lines); index++ {
-		content, ok := borderedContent(lines[index])
-		if !ok {
+		trimmed := cleanLine(lines[index])
+		// Stop at the next prompt line (┃ prefix with content = new user message)
+		if isPromptLine(lines[index]) && index > assistantIndex {
 			break
 		}
-		innerText := stripBorder(content)
-		innerText = stripSidebar(innerText)
-		trimmed := strings.TrimSpace(innerText)
-		if trimmed == "" || isSidebarContent(trimmed) {
-			continue
+		// Stop at separator line (▀ block characters)
+		if separatorPattern.MatchString(trimmed) {
+			break
 		}
-		// Stop at the next prompt, status bar, or permission prompt
-		if strings.HasPrefix(trimmed, "△") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "$") {
+		// Stop at model footer (Build · model or Plan · model in input area)
+		if modelFooterPattern.MatchString(trimmed) {
+			break
+		}
+		// Stop at ▣ model footer with timing
+		if strings.Contains(trimmed, "▣") && (strings.Contains(trimmed, "Build") || strings.Contains(trimmed, "Plan")) {
+			break
+		}
+		// Stop at permission prompt
+		if strings.HasPrefix(trimmed, "△") || permissionHeaderPattern.MatchString(trimmed) {
 			break
 		}
 		if strings.Contains(trimmed, allowOnceText) || strings.Contains(trimmed, allowAlwaysText) || strings.Contains(trimmed, rejectText) {
 			break
 		}
+		// Stop at activity indicators
 		if strings.Contains(trimmed, thinkingText) || strings.Contains(trimmed, thoughtText) || strings.Contains(trimmed, interruptText) {
+			break
+		}
+		if strings.HasPrefix(trimmed, "+") && (strings.Contains(trimmed, "Thought") || strings.Contains(trimmed, "Thinking")) {
 			break
 		}
 		if strings.HasPrefix(trimmed, "Ask anything") {
 			break
 		}
-		// Check for mode/model footer
-		if modelFooterPattern.MatchString(trimmed) {
+		// Skip footer/keyboard hints line
+		if strings.Contains(trimmed, "ctrl+p") || strings.Contains(trimmed, "commands") && strings.Contains(trimmed, "tab ") {
 			break
+		}
+		// Skip sidebar content
+		if isSidebarContent(trimmed) {
+			continue
 		}
 		output = append(output, trimmed)
 	}
@@ -682,6 +702,27 @@ func stripBorder(line string) string {
 		return strings.TrimPrefix(trimmed, "╹")
 	}
 	return trimmed
+}
+
+// cleanLine extracts readable text from a screen line, stripping borders and sidebar content.
+func cleanLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	// Strip border characters
+	trimmed = stripBorder(trimmed)
+	// Strip sidebar content
+	trimmed = stripSidebar(trimmed)
+	return strings.TrimSpace(trimmed)
+}
+
+// isPromptLine reports whether a line looks like a user prompt in the input area.
+// User prompts in OpenCode are inside ┃ bordered content, like: ┃ hello world
+func isPromptLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "┃") {
+		return false
+	}
+	innerText := strings.TrimSpace(strings.TrimPrefix(trimmed, "┃"))
+	return innerText != ""
 }
 
 func firstPromptLine(prompt string) string {
@@ -781,6 +822,29 @@ func formatTurn(turn uint64) string {
 		turn /= 10
 	}
 	return string(buffer[index:])
+}
+
+// dumpScreenToFile writes the xterm screen buffer to a file for debugging.
+func dumpScreenToFile(term *xterm.Terminal, prompt, extracted string) {
+	f, err := os.Create("/tmp/opencode-screen-dump.txt")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "prompt=%q extracted=%q\n\n", prompt, extracted)
+	buffer := term.Buffer()
+	for i := 0; i < buffer.Lines.Length(); i++ {
+		line := buffer.Lines.Get(i)
+		if line == nil {
+			continue
+		}
+		text := line.TranslateToString(true, 0, -1)
+		wrapped := ""
+		if line.IsWrapped {
+			wrapped = " [W]"
+		}
+		fmt.Fprintf(f, "[%2d] %q%s\n", i, text, wrapped)
+	}
 }
 
 // opencodeCommands are OpenCode's built-in slash commands.

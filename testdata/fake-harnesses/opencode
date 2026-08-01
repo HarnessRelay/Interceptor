@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake OpenCode harness for testing the interceptor adapter."""
+"""Fake OpenCode harness matching real v1.18.3 TUI layout."""
 import os
 import sys
 import termios
@@ -14,17 +14,20 @@ def write(value: str) -> None:
 original = termios.tcgetattr(sys.stdin.fileno())
 tty.setraw(sys.stdin.fileno())
 try:
-    # OpenCode banner and initial TUI
+    # Initial screen with banner (needed for UI detection) and input area
     write("\x1b[>4;1m\x1b[2J")
-    write("█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\r\n")
-    write("█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀\r\n")
-    write("▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀\r\n")
-    write("\r\n")
-    write("┃ Ask anything...\r\n")
-    write("┃ Build · gpt-fake-model\r\n")
-    write("╹\r\n")
-    write("tab agents  ctrl+p commands\r\n")
-    write("/tmp/fake-project  1.18.3\r\n")
+    # Banner at top
+    write("\x1b[1;1H                                   ▄     ")
+    write("\x1b[2;1H  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█")
+    write("\x1b[3;1H  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀")
+    write("\x1b[4;1H  ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀")
+    # Chat area (empty initially, below banner)
+    # Input area at bottom
+    write("\x1b[33;1H  ┃  Ask anything..." + " " * 100)
+    write("\x1b[36;1H  ┃  Build · gpt-fake-model" + " " * 70)
+    write("\x1b[37;1H  ╹" + "▀" * 118)
+    write("\x1b[38;1H   /tmp/fake-project                              ctrl+p commands  1.18.3")
+    write("\x1b[33;5H")  # cursor to input
 
     buffer = bytearray()
     awaiting_approval = False
@@ -38,34 +41,39 @@ try:
                 # Reject
                 awaiting_approval = False
                 write("\x1b[2J")
-                write("┃ \r\n")
-                write("┃ Denied.\r\n")
-                write("┃ \r\n")
-                write("┃ Ask anything...\r\n")
-                write("┃ Build · gpt-fake-model\r\n")
-                write("╹\r\n")
-                write("/tmp/fake-project  1.18.3\r\n")
+                write("\x1b[1;1H                                   ▄     ")
+                write("\x1b[2;1H  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█")
+                write("\x1b[3;1H  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀")
+                write("\x1b[4;1H  ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀")
+                write("\x1b[7;1H     Denied." + " " * 100)
+                write("\x1b[10;1H     ▣  Build · gpt-fake-model · 0.1s" + " " * 80)
+                write("\x1b[33;1H  ┃  Ask anything..." + " " * 100)
+                write("\x1b[36;1H  ┃  Build · gpt-fake-model" + " " * 70)
+                write("\x1b[37;1H  ╹" + "▀" * 118)
+                write("\x1b[38;1H   /tmp/fake-project                              ctrl+p commands  1.18.3")
+                write("\x1b[33;5H")
                 buffer.clear()
                 continue
             if value == b"\r":
-                # Allow once (Enter on default focused "Allow once")
+                # Allow once
                 awaiting_approval = False
                 write("\x1b[2J")
-                write("┃ \r\n")
-                write("┃ Running command...\r\n")
-                write("┃ \r\n")
-                write("┃ hello\r\n")
-                write("┃ \r\n")
-                write("┃ Done. The command output is shown above.\r\n")
-                write("┃ \r\n")
-                write("┃ Ask anything...\r\n")
-                write("┃ Build · gpt-fake-model\r\n")
-                write("╹\r\n")
-                write("/tmp/fake-project  1.18.3\r\n")
+                write("\x1b[1;1H                                   ▄     ")
+                write("\x1b[2;1H  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█")
+                write("\x1b[3;1H  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀")
+                write("\x1b[4;1H  ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀")
+                write("\x1b[7;1H     Running command..." + " " * 100)
+                write("\x1b[8;1H     hello" + " " * 110)
+                write("\x1b[9;1H     Done. The command output is shown above." + " " * 70)
+                write("\x1b[10;1H     ▣  Build · gpt-fake-model · 1.2s" + " " * 80)
+                write("\x1b[33;1H  ┃  Ask anything..." + " " * 100)
+                write("\x1b[36;1H  ┃  Build · gpt-fake-model" + " " * 70)
+                write("\x1b[37;1H  ╹" + "▀" * 118)
+                write("\x1b[38;1H   /tmp/fake-project                              ctrl+p commands  1.18.3")
+                write("\x1b[33;5H")
                 buffer.clear()
                 continue
             if value == b"\t":
-                # Tab to cycle to next button
                 continue
         buffer.extend(value)
         submitted = False
@@ -79,31 +87,39 @@ try:
             continue
         buffer.clear()
 
-        # Echo the prompt
-        write(f"\x1b[2J")
-        write(f"┃ {prompt}\r\n")
+        # Clear screen and redraw
+        write("\x1b[2J")
+        write("\x1b[1;1H                                   ▄     ")
+        write("\x1b[2;1H  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█")
+        write("\x1b[3;1H  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀")
+        write("\x1b[4;1H  ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀")
+        # User prompt in bordered input area
+        write(f"\x1b[6;1H  ┃  {prompt}" + " " * 100)
 
         if "echo" in prompt.lower() or "run" in prompt.lower() or "command" in prompt.lower():
-            # Show permission prompt
-            write("┃ △ Permission required\r\n")
-            write("┃ # Shell command\r\n")
-            write("┃ $ echo hello\r\n")
-            write("┃ \r\n")
-            write("┃ Allow once   Allow always   Reject\r\n")
-            write("┃ enter confirm\r\n")
-            write("┃ Build · gpt-fake-model\r\n")
-            write("╹\r\n")
-            write("/tmp/fake-project  1.18.3\r\n")
+            # Permission prompt (rendered in plain screen area)
+            write("\x1b[8;1H     △ Permission required" + " " * 90)
+            write("\x1b[9;1H     # Shell command" + " " * 100)
+            write("\x1b[10;1H     $ echo hello" + " " * 100)
+            write("\x1b[11;1H     " + " " * 110)
+            write("\x1b[12;1H     Allow once   Allow always   Reject" + " " * 80)
+            write("\x1b[13;1H     enter confirm" + " " * 100)
+            write("\x1b[33;1H  ┃ " + " " * 116)
+            write("\x1b[36;1H  ┃  Build · gpt-fake-model" + " " * 70)
+            write("\x1b[37;1H  ╹" + "▀" * 118)
+            write("\x1b[38;1H   /tmp/fake-project                              ctrl+p commands  1.18.3")
+            write("\x1b[33;5H")
             awaiting_approval = True
         else:
-            # Normal response
-            write("┃ \r\n")
-            write(f"┃ Fake OpenCode response to: {prompt}\r\n")
-            write("┃ \r\n")
-            write("┃ Ask anything...\r\n")
-            write("┃ Build · gpt-fake-model\r\n")
-            write("╹\r\n")
-            write("/tmp/fake-project  1.18.3\r\n")
+            # Normal response (rendered in plain screen area, outside borders)
+            write(f"\x1b[8;1H     + Thought: 5ms" + " " * 100)
+            write(f"\x1b[10;1H     Fake OpenCode response to: {prompt}" + " " * 80)
+            write(f"\x1b[12;1H     ▣  Build · gpt-fake-model · 0.5s" + " " * 80)
+            write("\x1b[33;1H  ┃  Ask anything..." + " " * 100)
+            write("\x1b[36;1H  ┃  Build · gpt-fake-model" + " " * 70)
+            write("\x1b[37;1H  ╹" + "▀" * 118)
+            write("\x1b[38;1H   /tmp/fake-project                              ctrl+p commands  1.18.3")
+            write("\x1b[33;5H")
             if os.environ.get("HARNESSRELAY_FAKE_EXIT_AFTER_RESPONSE") == "1":
                 break
 finally:
