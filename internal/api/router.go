@@ -33,6 +33,9 @@ type Options struct {
 	Audit      *storage.AuditLog
 	Harnesses  []harness.Detected
 	AllowedIPs []config.AllowedIP
+	Identity   *security.DeviceIdentity
+	Pairing    *security.PairingManager
+	Devices    *security.PairedDeviceStore
 }
 
 type healthResponse struct {
@@ -204,6 +207,35 @@ type eventsResponse struct {
 	Events []events.Event `json:"events"`
 }
 
+type identityResponse struct {
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	PublicKey  string `json:"public_key"`
+}
+
+type pairingRequestPayload struct {
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	Platform   string `json:"platform"`
+	PublicKey  string `json:"public_key"`
+}
+
+type pairingStatusResponse struct {
+	Status string `json:"status"`
+}
+
+type pairingRequestsResponse struct {
+	Requests []security.PairingRequest `json:"requests"`
+}
+
+type pairingAcceptRejectRequest struct {
+	DeviceID string `json:"device_id"`
+}
+
+type pairedDevicesResponse struct {
+	Devices []security.PairedDevice `json:"devices"`
+}
+
 var requestCounter uint64
 
 func NewRouter(opts Options) http.Handler {
@@ -260,6 +292,14 @@ func NewRouter(opts Options) http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions/{id}/events", opts.requireAuth(opts.handleSessionEvents))
 	mux.HandleFunc("POST /api/v1/sessions/{id}/actions/{action_id}", opts.requireAuth(opts.handleSessionAction))
 	mux.HandleFunc("GET /api/v1/ws", opts.handleWebSocket)
+	mux.HandleFunc("GET /api/v1/identity", opts.handleIdentity)
+	mux.HandleFunc("POST /api/v1/pairing/request", opts.handlePairingRequest)
+	mux.HandleFunc("GET /api/v1/pairing/status", opts.handlePairingStatus)
+	mux.HandleFunc("GET /api/v1/pairing/requests", opts.requireAuth(opts.handlePairingRequests))
+	mux.HandleFunc("POST /api/v1/pairing/accept", opts.requireAuth(opts.handlePairingAccept))
+	mux.HandleFunc("POST /api/v1/pairing/reject", opts.requireAuth(opts.handlePairingReject))
+	mux.HandleFunc("GET /api/v1/pairing/devices", opts.requireAuth(opts.handlePairingDevices))
+	mux.HandleFunc("DELETE /api/v1/pairing/devices/{id}", opts.requireAuth(opts.handlePairingDeviceRemove))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -766,6 +806,134 @@ func (opts Options) handleSessionAction(w http.ResponseWriter, r *http.Request) 
 		EventID:  req.EventID,
 		ActionID: actionID,
 	}})
+}
+
+func (opts Options) handleIdentity(w http.ResponseWriter, r *http.Request) {
+	if opts.Identity == nil {
+		writeError(w, http.StatusServiceUnavailable, "device identity not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, identityResponse{
+		DeviceID:   opts.Identity.ID,
+		DeviceName: opts.Identity.Name,
+		PublicKey:  base64.StdEncoding.EncodeToString(opts.Identity.PublicKey),
+	})
+}
+
+func (opts Options) handlePairingRequest(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
+		return
+	}
+	var req pairingRequestPayload
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.DeviceID == "" || req.DeviceName == "" || req.PublicKey == "" {
+		writeError(w, http.StatusBadRequest, "device_id, device_name, and public_key are required")
+		return
+	}
+	msg, ok := opts.Pairing.SubmitRequest(security.PairingRequest{
+		DeviceID:   req.DeviceID,
+		DeviceName: req.DeviceName,
+		Platform:   req.Platform,
+		PublicKey:   req.PublicKey,
+	})
+	if !ok {
+		writeError(w, http.StatusTooManyRequests, msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+}
+
+func (opts Options) handlePairingStatus(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
+		return
+	}
+	deviceID := r.URL.Query().Get("device_id")
+	if deviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+	status := opts.Pairing.GetStatus(deviceID)
+	writeJSON(w, http.StatusOK, pairingStatusResponse{Status: string(status)})
+}
+
+func (opts Options) handlePairingRequests(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeJSON(w, http.StatusOK, pairingRequestsResponse{Requests: []security.PairingRequest{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, pairingRequestsResponse{Requests: opts.Pairing.PendingRequests()})
+}
+
+func (opts Options) handlePairingAccept(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
+		return
+	}
+	var req pairingAcceptRejectRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+	if !opts.Pairing.Accept(req.DeviceID) {
+		writeError(w, http.StatusNotFound, "no pending request for this device")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "accepted"})
+}
+
+func (opts Options) handlePairingReject(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
+		return
+	}
+	var req pairingAcceptRejectRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+	if !opts.Pairing.Reject(req.DeviceID) {
+		writeError(w, http.StatusNotFound, "no pending request for this device")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "rejected"})
+}
+
+func (opts Options) handlePairingDevices(w http.ResponseWriter, r *http.Request) {
+	if opts.Devices == nil {
+		writeJSON(w, http.StatusOK, pairedDevicesResponse{Devices: []security.PairedDevice{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, pairedDevicesResponse{Devices: opts.Devices.List()})
+}
+
+func (opts Options) handlePairingDeviceRemove(w http.ResponseWriter, r *http.Request) {
+	if opts.Devices == nil {
+		writeError(w, http.StatusServiceUnavailable, "device management not available")
+		return
+	}
+	deviceID := r.PathValue("id")
+	if deviceID == "" {
+		writeError(w, http.StatusBadRequest, "device id is required")
+		return
+	}
+	if !opts.Devices.Remove(deviceID) {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

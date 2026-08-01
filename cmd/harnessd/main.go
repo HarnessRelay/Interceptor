@@ -14,6 +14,7 @@ import (
 
 	"github.com/harnessrelay/interceptor/internal/api"
 	"github.com/harnessrelay/interceptor/internal/config"
+	"github.com/harnessrelay/interceptor/internal/discovery"
 	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/logging"
@@ -76,6 +77,51 @@ func serve() error {
 		)
 	}
 	auth := security.NewAuthenticator(authToken)
+
+	// Pairing infrastructure
+	configDir, _ := config.ConfigDir()
+	var deviceIdentity *security.DeviceIdentity
+	var deviceStore *security.PairedDeviceStore
+	var pairingMgr *security.PairingManager
+	var mdnsAdvertiser *discovery.Advertiser
+
+	if cfg.Security.PairingEnabled {
+		hostname, _ := os.Hostname()
+		var err error
+		deviceIdentity, err = security.LoadOrCreateDeviceIdentity(configDir, hostname)
+		if err != nil {
+			logger.Warn("failed to load device identity, pairing disabled", slog.String("error", err.Error()))
+		} else {
+			logger.Info("device identity loaded",
+				slog.String("device_id", deviceIdentity.ID),
+				slog.String("device_name", deviceIdentity.Name),
+			)
+
+			deviceStore, err = security.NewPairedDeviceStore(configDir)
+			if err != nil {
+				logger.Warn("failed to load paired devices", slog.String("error", err.Error()))
+			} else {
+				auth.SetPairedDeviceStore(deviceStore)
+				pairingMgr = security.NewPairingManager(deviceStore)
+				logger.Info("pairing manager initialized",
+					slog.Int("paired_devices", len(deviceStore.List())),
+				)
+			}
+
+			// Start mDNS advertisement
+			mdnsAdvertiser = discovery.NewAdvertiser(discovery.Config{
+				DeviceID:    deviceIdentity.ID,
+				DeviceName:  deviceIdentity.Name,
+				Port:        cfg.Port,
+				Version:     version,
+				Fingerprint: security.ShortFingerprint(deviceIdentity.PublicKey),
+			}, logger)
+			if err := mdnsAdvertiser.Start(); err != nil {
+				logger.Warn("mDNS advertisement failed", slog.String("error", err.Error()))
+			}
+		}
+	}
+
 	if !security.IsLocalBind(cfg.Address()) {
 		if len(cfg.AllowedIPs) > 0 {
 			logger.Info("harnessd binding outside localhost with IP allowlist enforced",
@@ -99,6 +145,9 @@ func serve() error {
 		Auth:       auth,
 		Harnesses:  harnesses,
 		AllowedIPs: cfg.AllowedIPs,
+		Identity:   deviceIdentity,
+		Pairing:    pairingMgr,
+		Devices:    deviceStore,
 	})
 
 	server := &http.Server{
@@ -132,6 +181,13 @@ func serve() error {
 			return nil
 		}
 		return err
+	}
+
+	if mdnsAdvertiser != nil {
+		mdnsAdvertiser.Stop()
+	}
+	if pairingMgr != nil {
+		pairingMgr.Stop()
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

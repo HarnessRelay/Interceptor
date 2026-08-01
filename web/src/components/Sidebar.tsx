@@ -6,6 +6,7 @@ import { AdapterBadge } from "./AdapterBadge";
 import { Dialog } from "./Dialog";
 import { LogoMark } from "./LoginScreen";
 import { ModeToggle } from "./ModeToggle";
+import { PairingPanel } from "./PairingPanel";
 import { StatusBadge } from "./StatusBadge";
 
 type Filter = "all" | "running" | "finished";
@@ -96,6 +97,8 @@ export function Sidebar({
         filter={filter}
         onCreate={() => setCreateOpen(true)}
       />
+
+      <PairingPanel />
 
       <div className="sidebar-footer">
         <span className="local-indicator"><span aria-hidden="true" /> Local daemon</span>

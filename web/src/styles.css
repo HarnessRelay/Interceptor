@@ -2027,6 +2027,141 @@ kbd {
   }
 }
 
+/* Pairing Panel */
+.pairing-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--font-size-small);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pairing-toggle:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.pairing-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-yellow);
+  color: var(--bg-root);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pairing-content {
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+
+.pairing-section {
+  margin-bottom: var(--space-3);
+}
+
+.pairing-section h3 {
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pairing-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-2);
+  background: var(--bg-elevated);
+}
+
+.pairing-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pairing-card-info strong {
+  font-size: var(--font-size-small);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pairing-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.pairing-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pairing-card-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.pairing-accept,
+.pairing-reject,
+.pairing-remove {
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  background: var(--bg-root);
+  color: var(--text-secondary);
+}
+
+.pairing-accept {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}
+
+.pairing-accept:hover {
+  opacity: 0.9;
+}
+
+.pairing-reject:hover {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.pairing-remove:hover {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.pairing-empty {
+  font-size: var(--font-size-small);
+  color: var(--text-muted);
+  margin: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

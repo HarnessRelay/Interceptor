@@ -45,6 +45,7 @@ type SecurityConfig struct {
 	AuthTokenSource     string
 	AllowRootForTesting bool
 	AllowNonLocalBind   bool
+	PairingEnabled      bool
 }
 
 func Default() Config {
@@ -57,6 +58,9 @@ func Default() Config {
 		},
 		Terminal: TerminalConfig{
 			HistoryLimitBytes: DefaultTerminalHistoryLimitMiB * 1024 * 1024,
+		},
+		Security: SecurityConfig{
+			PairingEnabled: true,
 		},
 	}
 }
@@ -136,6 +140,8 @@ func loadFile(cfg *Config) error {
 				cfg.Port = value
 			case "allowlist_permits_nonlocal_bind":
 				cfg.AllowlistPermitsNonLocalBind = strings.ToLower(raw) == "true"
+			case "pairing_enabled":
+				cfg.Security.PairingEnabled = strings.ToLower(raw) == "true"
 			}
 		}
 		return nil

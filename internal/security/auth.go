@@ -6,7 +6,10 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +36,7 @@ type Authenticator struct {
 	mu        sync.Mutex
 	sessions  map[string]sessionRecord
 	now       func() time.Time
+	devices   *PairedDeviceStore
 }
 
 type sessionRecord struct {
@@ -57,6 +61,10 @@ func GenerateToken() string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func (a *Authenticator) SetPairedDeviceStore(devices *PairedDeviceStore) {
+	a.devices = devices
 }
 
 func (a *Authenticator) CheckToken(token string) bool {
@@ -92,6 +100,9 @@ func (a *Authenticator) Authenticate(r *http.Request) (Principal, error) {
 			return Principal{Actor: "local"}, nil
 		}
 		return Principal{}, ErrUnauthenticated
+	}
+	if principal, err := a.authenticateDeviceSignature(r); err == nil {
+		return principal, nil
 	}
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
@@ -142,4 +153,67 @@ func unsafeMethod(method string) bool {
 	default:
 		return true
 	}
+}
+
+const maxSignatureDrift = 30 * time.Second
+
+func (a *Authenticator) authenticateDeviceSignature(r *http.Request) (Principal, error) {
+	deviceID := r.Header.Get("X-Device-ID")
+	sigB64 := r.Header.Get("X-Signature")
+	tsStr := r.Header.Get("X-Timestamp")
+	if deviceID == "" || sigB64 == "" || tsStr == "" {
+		return Principal{}, ErrUnauthenticated
+	}
+
+	if a.devices == nil {
+		return Principal{}, ErrUnauthenticated
+	}
+
+	pubKey, err := a.devices.GetPublicKey(deviceID)
+	if err != nil {
+		return Principal{}, ErrUnauthenticated
+	}
+
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return Principal{}, ErrUnauthenticated
+	}
+	now := a.now().Unix()
+	drift := now - ts
+	if drift < 0 {
+		drift = -drift
+	}
+	if drift > int64(maxSignatureDrift.Seconds()) {
+		return Principal{}, ErrUnauthenticated
+	}
+
+	bodyHash := sha256Hash(r)
+	message := fmt.Sprintf("%s\n%s\n%s\n%s", r.Method, r.URL.Path, tsStr, bodyHash)
+
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil {
+		return Principal{}, ErrUnauthenticated
+	}
+
+	if !VerifySignature(pubKey, []byte(message), sig) {
+		return Principal{}, ErrUnauthenticated
+	}
+
+	a.devices.Touch(deviceID)
+	return Principal{Actor: deviceID}, nil
+}
+
+func sha256Hash(r *http.Request) string {
+	if r.Body == nil || r.ContentLength == 0 {
+		return ""
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+	r.Body.Close()
+	// Restore body for downstream handlers
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	hash := sha256.Sum256(body)
+	return base64.StdEncoding.EncodeToString(hash[:])
 }

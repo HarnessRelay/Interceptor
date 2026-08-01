@@ -1,4 +1,4 @@
-import type { AuthStatus, CommandCatalog, CreateForm, EventEnvelope, HarnessCommand, HarnessPreset, SemanticAction, Session, Snapshot } from "../types";
+import type { AuthStatus, CommandCatalog, CreateForm, DaemonIdentity, EventEnvelope, HarnessCommand, HarnessPreset, PairedDevice, PairingRequest, SemanticAction, Session, Snapshot } from "../types";
 import { encodeBase64, isUnsafeMethod, splitArgs } from "../utils";
 
 let csrfToken = "";
@@ -115,6 +115,34 @@ export const api = {
         action_version: action.version || 0
       })
     });
+  },
+  async pairingRequests(): Promise<PairingRequest[]> {
+    const data = await request<{ requests: PairingRequest[] }>("/api/v1/pairing/requests");
+    return data.requests;
+  },
+  async acceptPairing(deviceID: string): Promise<void> {
+    await request("/api/v1/pairing/accept", {
+      method: "POST",
+      body: JSON.stringify({ device_id: deviceID })
+    });
+  },
+  async rejectPairing(deviceID: string): Promise<void> {
+    await request("/api/v1/pairing/reject", {
+      method: "POST",
+      body: JSON.stringify({ device_id: deviceID })
+    });
+  },
+  async pairedDevices(): Promise<PairedDevice[]> {
+    const data = await request<{ devices: PairedDevice[] }>("/api/v1/pairing/devices");
+    return data.devices;
+  },
+  async removePairedDevice(deviceID: string): Promise<void> {
+    await request(`/api/v1/pairing/devices/${encodeURIComponent(deviceID)}`, {
+      method: "DELETE"
+    });
+  },
+  async daemonIdentity(): Promise<DaemonIdentity> {
+    return request<DaemonIdentity>("/api/v1/identity");
   }
 };
 

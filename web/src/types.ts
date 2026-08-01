@@ -127,3 +127,26 @@ export type AuthStatus = {
   authenticated: boolean;
   csrf_token?: string;
 };
+
+export type PairingRequest = {
+  device_id: string;
+  device_name: string;
+  platform: string;
+  public_key: string;
+  received_at: string;
+};
+
+export type PairedDevice = {
+  device_id: string;
+  device_name: string;
+  platform: string;
+  public_key: string;
+  paired_at: string;
+  last_seen: string;
+};
+
+export type DaemonIdentity = {
+  device_id: string;
+  device_name: string;
+  public_key: string;
+};
