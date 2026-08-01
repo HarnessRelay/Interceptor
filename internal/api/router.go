@@ -31,6 +31,7 @@ type Options struct {
 	Events     *events.Bus
 	Auth       *security.Authenticator
 	Audit      *storage.AuditLog
+	DB         *storage.DB
 	Harnesses  []harness.Detected
 	AllowedIPs []config.AllowedIP
 	Identity   *security.DeviceIdentity
@@ -276,6 +277,7 @@ func NewRouter(opts Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", opts.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/harnesses", opts.requireAuth(opts.handleListHarnesses))
 	mux.HandleFunc("GET /api/v1/sessions", opts.requireAuth(opts.handleListSessions))
+	mux.HandleFunc("GET /api/v1/archive/sessions", opts.requireAuth(opts.handleListArchive))
 	mux.HandleFunc("POST /api/v1/sessions", opts.requireAuth(opts.handleCreateSession))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", opts.requireAuth(opts.handleGetSession))
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}", opts.requireAuth(opts.handleDeleteSession))
@@ -363,6 +365,32 @@ func (opts Options) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	for _, sess := range sessions {
 		out = append(out, sessionToDTO(sess.Info()))
 	}
+	// Append up to 5 most recent archived sessions
+	if opts.DB != nil {
+		archived, err := opts.DB.ListArchivedSessions(5)
+		if err == nil {
+			for _, info := range archived {
+				out = append(out, sessionInfoToDTO(info))
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, sessionsResponse{Sessions: out})
+}
+
+func (opts Options) handleListArchive(w http.ResponseWriter, r *http.Request) {
+	if opts.DB == nil {
+		writeJSON(w, http.StatusOK, sessionsResponse{Sessions: []sessionDTO{}})
+		return
+	}
+	archived, err := opts.DB.ListArchivedSessions(0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load archive")
+		return
+	}
+	out := make([]sessionDTO, 0, len(archived))
+	for _, info := range archived {
+		out = append(out, sessionInfoToDTO(info))
+	}
 	writeJSON(w, http.StatusOK, sessionsResponse{Sessions: out})
 }
 
@@ -448,11 +476,18 @@ func (opts Options) handleCreateSession(w http.ResponseWriter, r *http.Request) 
 
 func (opts Options) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	sess, ok := opts.Sessions.Get(r.PathValue("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "session not found")
+	if ok {
+		writeJSON(w, http.StatusOK, sessionResponse{Session: sessionToDTO(sess.Info())})
 		return
 	}
-	writeJSON(w, http.StatusOK, sessionResponse{Session: sessionToDTO(sess.Info())})
+	if opts.DB != nil {
+		info, err := opts.DB.GetArchivedSession(r.PathValue("id"))
+		if err == nil && info != nil {
+			writeJSON(w, http.StatusOK, sessionResponse{Session: sessionInfoToDTO(*info)})
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "session not found")
 }
 
 func (opts Options) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -731,25 +766,49 @@ func (opts Options) handleSessionSnapshot(w http.ResponseWriter, r *http.Request
 
 func (opts Options) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := opts.Sessions.Get(id); !ok {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
-	after, err := parseUintQuery(r, "after_seq")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	limit := 100
-	if v := r.URL.Query().Get("limit"); v != "" {
-		parsed, err := strconv.Atoi(v)
-		if err != nil || parsed <= 0 {
-			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+	if _, ok := opts.Sessions.Get(id); ok {
+		after, err := parseUintQuery(r, "after_seq")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		limit = parsed
+		limit := 100
+		if v := r.URL.Query().Get("limit"); v != "" {
+			parsed, err := strconv.Atoi(v)
+			if err != nil || parsed <= 0 {
+				writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+				return
+			}
+			limit = parsed
+		}
+		writeJSON(w, http.StatusOK, eventsResponse{Events: opts.Events.History(id, after, limit)})
+		return
 	}
-	writeJSON(w, http.StatusOK, eventsResponse{Events: opts.Events.History(id, after, limit)})
+	if opts.DB != nil {
+		info, err := opts.DB.GetArchivedSession(id)
+		if err == nil && info != nil {
+			after, err := parseUintQuery(r, "after_seq")
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			limit := 100
+			if v := r.URL.Query().Get("limit"); v != "" {
+				parsed, err := strconv.Atoi(v)
+				if err != nil || parsed <= 0 {
+					writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+					return
+				}
+				limit = parsed
+			}
+			evts, err := opts.DB.GetArchivedEvents(id, after, limit)
+			if err == nil {
+				writeJSON(w, http.StatusOK, eventsResponse{Events: evts})
+				return
+			}
+		}
+	}
+	writeError(w, http.StatusNotFound, "session not found")
 }
 
 func (opts Options) handleSessionAction(w http.ResponseWriter, r *http.Request) {
@@ -1004,6 +1063,10 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func sessionToDTO(info session.Info) sessionDTO {
+	return sessionInfoToDTO(info)
+}
+
+func sessionInfoToDTO(info session.Info) sessionDTO {
 	updatedAt := info.StartedAt
 	if info.ExitedAt != nil {
 		updatedAt = *info.ExitedAt

@@ -38,12 +38,18 @@ type Bus struct {
 	sequences    map[string]uint64
 	history      map[string][]Event
 	historyLimit int
+	store        PersistStore
 }
 
 type subEntry struct {
 	ch     chan Event
 	sessID string
 	types  map[Type]struct{}
+}
+
+// PersistStore is implemented by the archive DB to persist lightweight events.
+type PersistStore interface {
+	PersistEvent(Event) error
 }
 
 // NewBus creates a new event bus.
@@ -54,6 +60,13 @@ func NewBus() *Bus {
 		history:      make(map[string][]Event),
 		historyLimit: defaultHistoryLimit,
 	}
+}
+
+// NewBusWithStore creates a new event bus that also persists lightweight events.
+func NewBusWithStore(store PersistStore) *Bus {
+	b := NewBus()
+	b.store = store
+	return b
 }
 
 // Publish sends an event to all matching subscribers.
@@ -71,6 +84,9 @@ func (b *Bus) Publish(ctx context.Context, event Event) Event {
 		event.Sequence = b.nextSeqLocked(event.SessionID)
 		b.appendHistoryLocked(event)
 		b.mu.Unlock()
+		if b.store != nil {
+			_ = b.store.PersistEvent(event)
+		}
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -140,6 +156,14 @@ func (b *Bus) remove(id string) {
 		close(e.ch)
 		delete(b.subs, id)
 	}
+}
+
+// ClearHistory removes stored events for a session to free memory.
+func (b *Bus) ClearHistory(sessionID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.history, sessionID)
+	delete(b.sequences, sessionID)
 }
 
 func (b *Bus) nextSeqLocked(sessionID string) uint64 {

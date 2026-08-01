@@ -10,3 +10,5 @@ web/node_modules/
 .kilo/**
 .commandcode
 .commandcode/**
+/harnessd
+/harnessctl

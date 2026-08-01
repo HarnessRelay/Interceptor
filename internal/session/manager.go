@@ -133,6 +133,7 @@ type Session struct {
 	outputDone        chan struct{}
 
 	publish func(typ events.Type, data any) events.Event
+	onExit  func()
 }
 
 type pendingSemanticAction struct {
@@ -209,6 +210,12 @@ type Manager struct {
 	sessions map[string]*Session
 	bus      *events.Bus
 	registry *harness.Registry
+	store    ArchiveStore
+}
+
+// ArchiveStore is implemented by the archive DB.
+type ArchiveStore interface {
+	ArchiveSession(info Info, evts []events.Event) error
 }
 
 // NewManager creates a new session manager without an event bus.
@@ -239,6 +246,13 @@ func NewManagerWithRegistry(bus *events.Bus, registry *harness.Registry) *Manage
 		bus:      bus,
 		registry: registry,
 	}
+}
+
+// SetStore attaches an archive store to the manager.
+func (m *Manager) SetStore(store ArchiveStore) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.store = store
 }
 
 func defaultRegistry() *harness.Registry {
@@ -364,6 +378,20 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (*Session, err
 			Confidence:  match.Confidence,
 			Reason:      match.Reason,
 		})
+	}
+
+	sess.onExit = func() {
+		m.mu.Lock()
+		store := m.store
+		bus := m.bus
+		m.mu.Unlock()
+		if store != nil {
+			var evts []events.Event
+			if bus != nil {
+				evts = bus.History(sess.ID, 0, 10000)
+			}
+			_ = store.ArchiveSession(sess.Info(), evts)
+		}
 	}
 
 	m.mu.Lock()
@@ -1008,6 +1036,9 @@ func (s *Session) wait() {
 				Reason:   reason,
 			})
 		}
+		if s.onExit != nil {
+			s.onExit()
+		}
 		return
 	}
 
@@ -1036,6 +1067,9 @@ func (s *Session) wait() {
 				Reason:   reason,
 			})
 		}
+		if s.onExit != nil {
+			s.onExit()
+		}
 		return
 	}
 
@@ -1050,6 +1084,9 @@ func (s *Session) wait() {
 			ExitCode: -1,
 			Reason:   "unknown_error",
 		})
+	}
+	if s.onExit != nil {
+		s.onExit()
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/logging"
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
+	"github.com/harnessrelay/interceptor/internal/storage"
 	dashboard "github.com/harnessrelay/interceptor/web"
 )
 
@@ -66,8 +68,22 @@ func serve() error {
 		return errors.New("refusing to run as root; set HARNESSRELAY_ALLOW_ROOT_FOR_TESTING=1 only for tests")
 	}
 	logger := logging.New(os.Stdout, slog.LevelInfo)
-	bus := events.NewBus()
+
+	dbPath := filepath.Join(cfg.Storage.Path, "harnessrelay.db")
+	_ = os.MkdirAll(cfg.Storage.Path, 0755)
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		logger.Warn("failed to open archive database, continuing without persistence", slog.String("error", err.Error()))
+		db = nil
+	} else {
+		logger.Info("archive database opened", slog.String("path", dbPath))
+	}
+
+	bus := events.NewBusWithStore(db)
 	sessions := session.NewManagerWithBus(bus)
+	if db != nil {
+		sessions.SetStore(db)
+	}
 	harnesses := harness.DiscoverInstalled(context.Background())
 	authToken := cfg.Security.AuthToken
 	if authToken == "" {
@@ -143,6 +159,7 @@ func serve() error {
 		Sessions:   sessions,
 		Events:     bus,
 		Auth:       auth,
+		DB:         db,
 		Harnesses:  harnesses,
 		AllowedIPs: cfg.AllowedIPs,
 		Identity:   deviceIdentity,
@@ -194,6 +211,11 @@ func serve() error {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return err
+	}
+	if db != nil {
+		if err := db.Close(); err != nil {
+			logger.Warn("failed to close archive database", slog.String("error", err.Error()))
+		}
 	}
 
 	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
