@@ -606,6 +606,115 @@ func TestManagerCodexApprovalAllowEmitsAssistantResult(t *testing.T) {
 	}
 }
 
+func TestManagerOpenCodeAdapterSemanticFlow(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "fake-opencode",
+		Command: fixturePath(t, "opencode"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	info := sess.Info()
+	if info.AdapterID != "opencode" || info.AdapterName != "OpenCode" {
+		t.Fatalf("adapter = %q/%q, want opencode/OpenCode", info.AdapterID, info.AdapterName)
+	}
+	if !hasCapability(info.Capabilities, "semantic_chat") {
+		t.Fatalf("capabilities missing semantic_chat: %v", info.Capabilities)
+	}
+
+	output := sess.Subscribe()
+	readUntil(t, output, "█▀▀█", 5*time.Second)
+	waitForHistoryEvent(t, bus, sess.ID, events.TypeChatSystemMessage, 5*time.Second)
+	waitForHistoryEvent(t, bus, sess.ID, events.TypeTerminalNoisyOutput, 5*time.Second)
+	metadata := waitForHarnessMetadataModel(t, bus, sess.ID, "gpt-fake-model", 5*time.Second)
+	metadataData := metadata.Data.(events.HarnessMetadata)
+	if metadataData.Model != "gpt-fake-model" || metadataData.Version != "1.18.3" {
+		t.Fatalf("metadata = %+v", metadataData)
+	}
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+
+	if err := mgr.SubmitPrompt(sess.ID, "hello opencode"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	readUntil(t, output, "Fake OpenCode response to: hello opencode", 5*time.Second)
+	user := waitForHistoryEvent(t, bus, sess.ID, events.TypeChatUserMessage, 5*time.Second)
+	if data := user.Data.(events.ChatMessage); data.Content != "hello opencode" {
+		t.Fatalf("user message = %+v", data)
+	}
+	assistant := waitForHistoryEvent(t, bus, sess.ID, events.TypeChatAssistantMessage, 5*time.Second)
+	if data := assistant.Data.(events.ChatMessage); data.Content != "Fake OpenCode response to: hello opencode" || data.MessageID != "opencode-turn-1" {
+		t.Fatalf("assistant message = %+v", data)
+	}
+}
+
+func TestManagerOpenCodeApprovalFlow(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManagerWithBus(bus)
+	sess, err := mgr.Create(context.Background(), CreateOptions{
+		Name:    "fake-opencode-approval",
+		Command: fixturePath(t, "opencode"),
+		WorkDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if sess.status() != StatusRunning {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = mgr.Terminate(ctx, sess.ID)
+	})
+
+	output := sess.Subscribe()
+	readUntil(t, output, "█▀▀█", 5*time.Second)
+	waitForHarnessStatus(t, bus, sess.ID, "idle", 5*time.Second)
+
+	if err := mgr.SubmitPrompt(sess.ID, "run echo hello"); err != nil {
+		t.Fatalf("SubmitPrompt: %v", err)
+	}
+	readUntil(t, output, "△ Permission required", 5*time.Second)
+	approval := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalRequired, 5*time.Second)
+	approvalData := approval.Data.(events.ApprovalRequired)
+	if approvalData.OperationKind != "shell_command" {
+		t.Fatalf("operation_kind = %q, want shell_command", approvalData.OperationKind)
+	}
+	if approvalData.Command != "echo hello" {
+		t.Fatalf("command = %q, want echo hello", approvalData.Command)
+	}
+	if len(approvalData.Actions) < 3 {
+		t.Fatalf("expected at least 3 actions, got %d", len(approvalData.Actions))
+	}
+
+	waitForPendingAction(t, sess, approval.ID, 5*time.Second)
+
+	if err := mgr.SubmitPrompt(sess.ID, "blocked"); !errors.Is(err, ErrApprovalPending) {
+		t.Fatalf("SubmitPrompt while pending error = %v, want ErrApprovalPending", err)
+	}
+
+	if err := mgr.ExecuteAction(sess.ID, approval.ID, "opencode.approval_allow"); err != nil {
+		t.Fatalf("ExecuteAction allow: %v", err)
+	}
+	readUntil(t, output, "Running command", 5*time.Second)
+	resolved := waitForHistoryEvent(t, bus, sess.ID, events.TypeApprovalResolved, 5*time.Second)
+	if data := resolved.Data.(events.ApprovalResolved); data.ApprovalEventID != approval.ID || data.Resolution != "approved" {
+		t.Fatalf("approval.resolved = %+v", data)
+	}
+}
+
 func TestManagerInterrupt(t *testing.T) {
 	mgr := NewManager()
 	sess, err := mgr.Create(context.Background(), CreateOptions{

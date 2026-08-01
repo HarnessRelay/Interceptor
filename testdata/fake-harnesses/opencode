@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Fake OpenCode harness for testing the interceptor adapter."""
+import os
+import sys
+import termios
+import time
+import tty
+
+
+def write(value: str) -> None:
+    os.write(sys.stdout.fileno(), value.encode())
+
+
+original = termios.tcgetattr(sys.stdin.fileno())
+tty.setraw(sys.stdin.fileno())
+try:
+    # OpenCode banner and initial TUI
+    write("\x1b[>4;1m\x1b[2J")
+    write("█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\r\n")
+    write("█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀\r\n")
+    write("▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀\r\n")
+    write("\r\n")
+    write("┃ Ask anything...\r\n")
+    write("┃ Build · gpt-fake-model\r\n")
+    write("╹\r\n")
+    write("tab agents  ctrl+p commands\r\n")
+    write("/tmp/fake-project  1.18.3\r\n")
+
+    buffer = bytearray()
+    awaiting_approval = False
+
+    while True:
+        value = os.read(sys.stdin.fileno(), 1)
+        if not value:
+            break
+        if awaiting_approval:
+            if value == b"\x1b":
+                # Reject
+                awaiting_approval = False
+                write("\x1b[2J")
+                write("┃ \r\n")
+                write("┃ Denied.\r\n")
+                write("┃ \r\n")
+                write("┃ Ask anything...\r\n")
+                write("┃ Build · gpt-fake-model\r\n")
+                write("╹\r\n")
+                write("/tmp/fake-project  1.18.3\r\n")
+                buffer.clear()
+                continue
+            if value == b"\r":
+                # Allow once (Enter on default focused "Allow once")
+                awaiting_approval = False
+                write("\x1b[2J")
+                write("┃ \r\n")
+                write("┃ Running command...\r\n")
+                write("┃ \r\n")
+                write("┃ hello\r\n")
+                write("┃ \r\n")
+                write("┃ Done. The command output is shown above.\r\n")
+                write("┃ \r\n")
+                write("┃ Ask anything...\r\n")
+                write("┃ Build · gpt-fake-model\r\n")
+                write("╹\r\n")
+                write("/tmp/fake-project  1.18.3\r\n")
+                buffer.clear()
+                continue
+            if value == b"\t":
+                # Tab to cycle to next button
+                continue
+        buffer.extend(value)
+        submitted = False
+        if buffer.endswith(b"\x1b[13u"):
+            prompt = bytes(buffer[:-5]).decode(errors="replace")
+            submitted = True
+        elif buffer.endswith(b"\r") or buffer.endswith(b"\n"):
+            prompt = bytes(buffer[:-1]).decode(errors="replace")
+            submitted = True
+        if not submitted:
+            continue
+        buffer.clear()
+
+        # Echo the prompt
+        write(f"\x1b[2J")
+        write(f"┃ {prompt}\r\n")
+
+        if "echo" in prompt.lower() or "run" in prompt.lower() or "command" in prompt.lower():
+            # Show permission prompt
+            write("┃ △ Permission required\r\n")
+            write("┃ # Shell command\r\n")
+            write("┃ $ echo hello\r\n")
+            write("┃ \r\n")
+            write("┃ Allow once   Allow always   Reject\r\n")
+            write("┃ enter confirm\r\n")
+            write("┃ Build · gpt-fake-model\r\n")
+            write("╹\r\n")
+            write("/tmp/fake-project  1.18.3\r\n")
+            awaiting_approval = True
+        else:
+            # Normal response
+            write("┃ \r\n")
+            write(f"┃ Fake OpenCode response to: {prompt}\r\n")
+            write("┃ \r\n")
+            write("┃ Ask anything...\r\n")
+            write("┃ Build · gpt-fake-model\r\n")
+            write("╹\r\n")
+            write("/tmp/fake-project  1.18.3\r\n")
+            if os.environ.get("HARNESSRELAY_FAKE_EXIT_AFTER_RESPONSE") == "1":
+                break
+finally:
+    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, original)

@@ -18,6 +18,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/harness/codex"
 	"github.com/harnessrelay/interceptor/internal/harness/fakesemantic"
 	"github.com/harnessrelay/interceptor/internal/harness/generic"
+	"github.com/harnessrelay/interceptor/internal/harness/opencode"
 	"github.com/harnessrelay/interceptor/internal/pty"
 )
 
@@ -257,9 +258,9 @@ func (m *Manager) SetStore(store ArchiveStore) {
 
 func defaultRegistry() *harness.Registry {
 	if os.Getenv("HARNESSRELAY_ENABLE_FAKE_ADAPTER") == "1" {
-		return generic.NewRegistry(codex.New(), fakesemantic.New())
+		return generic.NewRegistry(codex.New(), opencode.New(), fakesemantic.New())
 	}
-	return generic.NewRegistry(codex.New())
+	return generic.NewRegistry(codex.New(), opencode.New())
 }
 
 // Create starts a new session with the given options.
