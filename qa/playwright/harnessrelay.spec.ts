@@ -273,6 +273,7 @@ test("QA-002: Chat Mode suppresses live noisy TUI artifacts consistently", async
 
   await page.reload();
   await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
+  await page.locator(".filter-button", { hasText: "All" }).click();
   await selectSession(page, sessionName);
   await expect(page.locator(".transcript")).toContainText("This session is using a terminal UI");
   await expect(page.locator(".transcript")).not.toContainText("MMMMMMMM");
@@ -598,6 +599,7 @@ test("Semantic adapter: fake Codex remains coherent across chat, terminal, appro
   await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
   await page.reload();
   await expect(page.getByRole("complementary", { name: "Session manager" })).toBeVisible();
+  await page.locator(".filter-button", { hasText: "All" }).click();
   await selectSession(page, sessionName);
   await expect(page.locator(".session-header")).toContainText(/exited|terminated/);
   await expect(page.locator(".transcript")).toContainText(`semantic-send-${unique}`);

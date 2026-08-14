@@ -1,7 +1,9 @@
+import { LogoMark } from "./LoginScreen";
+
 export function EmptyState({ loading, onCreate }: { loading: boolean; onCreate: () => void }) {
   return (
     <div className="empty-state">
-      <div className="empty-state-mark" aria-hidden="true"><span>›_</span></div>
+      <div className="empty-state-mark" aria-hidden="true"><LogoMark /></div>
       <h2>{loading ? "Loading your sessions" : "Start a local harness"}</h2>
       <p>{loading ? "Checking the local daemon." : "Start a detected coding harness or open a shell, with the complete terminal always one click away."}</p>
       {!loading && <button className="primary-button" type="button" onClick={onCreate}>New session</button>}

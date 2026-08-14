@@ -47,6 +47,12 @@ Many AI coding harnesses are terminal-first. They often need approvals, steering
 
 The goal is not to build another coding agent. The goal is to make existing harnesses easier to control through a universal local relay layer.
 
+## Documentation
+
+This repository contains the source-of-truth implementation docs under `Docs/`. A mirror of the documentation is also maintained in the **Obsidian knowledgebase vault** under the `HarnessRelay/` directory, where it can be queried and updated via the `knowledgebase` MCP tools.
+
+If you are working with an agent that has access to the knowledgebase MCP, prefer querying the vault for quick reference and search. Keep the in-repo `Docs/` files as the canonical source for version-controlled changes.
+
 ## Project status: extremely early / experimental
 
 HarnessRelay is in a very, very early stage.

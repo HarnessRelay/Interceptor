@@ -38,7 +38,7 @@ export function App() {
   const refreshSessions = useCallback(async () => {
     const next = await api.listSessions();
     setSessions(next);
-    setActiveID((current) => current || next[0]?.id || null);
+    setActiveID((current) => current || null);
     setModeBySession((current) => {
       const nextModes = { ...current };
       for (const session of next) {

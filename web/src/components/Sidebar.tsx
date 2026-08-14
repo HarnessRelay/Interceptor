@@ -36,7 +36,7 @@ export function Sidebar({
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("running");
   useEffect(() => {
     if (createSignal > 0) setCreateOpen(true);
   }, [createSignal]);
@@ -111,6 +111,7 @@ export function Sidebar({
         onClose={() => setCreateOpen(false)}
         onCreated={(session, mode) => {
           setCreateOpen(false);
+          setFilter("all");
           onCreated(session, mode);
         }}
         onError={onError}
