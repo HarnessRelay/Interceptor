@@ -197,7 +197,11 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) wait() {
 	err := r.cmd.Wait()
-	_ = r.Close()
+	// The master is intentionally NOT closed here: closing it immediately
+	// on child exit would discard output still buffered in the kernel PTY
+	// before the session's reader drains it. The session layer closes the
+	// runtime after its output reader finishes (with a bounded grace
+	// period so stuck readers cannot hang session exit).
 	r.waitMu.Lock()
 	r.waitErr = err
 	r.waitMu.Unlock()

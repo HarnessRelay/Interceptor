@@ -99,6 +99,7 @@ The current implementation includes:
 - interrupt and terminate controls
 - local attach support with `harnessctl attach <session-id>`
 - terminal cleanup on normal attach exit, detach, daemon disconnect, web terminate, and force kill paths
+- remote access through an app-managed Cloudflare Tunnel (quick tunnel or named tunnel token)
 
 ## What does not work yet / known limitations
 
@@ -342,7 +343,51 @@ To expose the dashboard on your LAN:
 
 When `allowed_ips.txt` is non-empty and `allowlist_permits_nonlocal_bind` is `true` (default), the daemon accepts non-local binds automatically. If you prefer to skip the allowlist and accept the risk, set `HARNESSRELAY_ALLOW_NONLOCAL_BIND=1`.
 
-Keep your token secret: LAN exposure means anyone who can reach the port must also authenticate with the token. Prefer VPN or SSH tunnel over public internet exposure.
+**Remote authentication model:** the static daemon token only works on the
+host machine. Every other device — phone, tablet, or a browser on another
+machine — signs in through the approval flow: the device requests access, a
+6-digit verification code appears on both the device and the daemon's
+Settings → Devices dialog, and you approve after confirming the codes match.
+Approved devices can also be renamed, removed, or banned from the same
+settings view, which also shows your LAN IP, the allow/ban lists, and every
+recently connected client (IP, MAC, hostname). A toggle can disable all
+remote access instantly.
+
+### Remote access via Cloudflare Tunnel
+
+The dashboard can expose itself through a Cloudflare Tunnel without opening any
+inbound port and without changing the loopback bind. The daemon launches a
+local `cloudflared` child process on demand from the dashboard's Remote Access
+panel; the daemon itself keeps listening on `127.0.0.1`.
+
+Two modes are supported:
+
+- **Quick Tunnel** (default): zero-config, no Cloudflare account. Creates a
+  random `https://<name>.trycloudflare.com` URL that changes each time the
+  tunnel starts. Cloudflare documents quick tunnels for development/testing
+  only (200 concurrent request cap, no SLA).
+- **Named tunnel**: paste a Cloudflare tunnel token (Zero Trust dashboard →
+  Tunnels → create remotely-managed tunnel) for a stable production-grade
+  URL. Configure the tunnel's public hostname in Cloudflare to point at
+  `http://localhost:8765`.
+
+The `cloudflared` binary is app-managed: `make install` downloads it
+best-effort into `~/.local/share/harnessrelay/bin/cloudflared`, and the
+dashboard's Tunnel settings can download or update it on demand (verified
+against the official GitHub release digest, atomic swap with rollback).
+Set `HARNESSRELAY_SKIP_CLOUDFLARED_DOWNLOAD=1` during install to skip.
+
+Security properties:
+
+- The static token is rejected from LAN/tunnel clients; remote devices sign
+  in only through the 6-digit-code approval flow, and login attempts are
+  rate limited per IP.
+- The public URL should still be treated as sensitive: anyone holding it can
+  reach the login screen and request access (you will see the request, but
+  should only approve codes you verified). Prefer named tunnels plus a
+  Cloudflare Access policy for long-lived exposure.
+- Stopping the tunnel from the dashboard or shutting the daemon down
+  terminates the `cloudflared` process.
 
 ### Restarting after config changes
 

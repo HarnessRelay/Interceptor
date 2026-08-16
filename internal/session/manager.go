@@ -999,9 +999,22 @@ func hasCapability(capabilities []harness.Capability, wanted harness.Capability)
 	return false
 }
 
+// outputDrainGrace bounds how long the output reader may keep draining PTY
+// output after the child exits before the master is force-closed. Fast exits
+// need a moment to drain buffered bytes; orphaned slave holders (grandchild
+// processes) must not hang session exit forever.
+const outputDrainGrace = 2 * time.Second
+
 func (s *Session) wait() {
 	defer close(s.done)
 	err := s.runtime.Wait()
+	// Let the reader drain output the child wrote just before exiting, then
+	// close the master (which unblocks a reader stuck on a slave held open
+	// by an orphaned grandchild).
+	select {
+	case <-s.outputDone:
+	case <-time.After(outputDrainGrace):
+	}
 	_ = s.runtime.Close()
 	<-s.outputDone
 	s.buf.Close()

@@ -22,6 +22,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
 	"github.com/harnessrelay/interceptor/internal/storage"
+	"github.com/harnessrelay/interceptor/internal/tunnel"
 	dashboard "github.com/harnessrelay/interceptor/web"
 )
 
@@ -152,19 +153,56 @@ func serve() error {
 		}
 	}
 
+	// The daemon context outlives every HTTP request; the tunnel manager
+	// binds cloudflared to it so the child is only killed at shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Runtime network access controls (allow/ban lists, remote toggle,
+	// client naming) persist next to the pairing data in the config dir.
+	allowedIPsPath, err := config.AllowedIPsPath()
+	if err != nil {
+		allowedIPsPath = filepath.Join(configDir, "allowed_ips.txt")
+	}
+	ipFilter, err := security.NewIPFilter(
+		allowedIPsPath,
+		filepath.Join(configDir, "banned_ips.txt"),
+		allowedIPStrings(cfg.AllowedIPs),
+	)
+	if err != nil {
+		logger.Warn("failed to load ip filter; continuing without list persistence", slog.String("error", err.Error()))
+		ipFilter = nil
+	}
+	remoteSettings, err := security.NewRemoteSettingsStore(configDir)
+	if err != nil {
+		logger.Warn("failed to load remote settings; remote access stays enabled", slog.String("error", err.Error()))
+		remoteSettings = nil
+	}
+	knownClients, err := security.NewKnownClientStore(configDir)
+	if err != nil {
+		logger.Warn("failed to load known clients; names unavailable", slog.String("error", err.Error()))
+		knownClients = nil
+	}
+
+	tunnelMgr := tunnel.NewManager(ctx, cfg.Port, configDir, logger)
+
 	router := api.NewRouter(api.Options{
-		Logger:     logger,
-		Version:    version,
-		StaticFS:   dashboardFS(),
-		Sessions:   sessions,
-		Events:     bus,
-		Auth:       auth,
-		DB:         db,
-		Harnesses:  harnesses,
-		AllowedIPs: cfg.AllowedIPs,
-		Identity:   deviceIdentity,
-		Pairing:    pairingMgr,
-		Devices:    deviceStore,
+		Logger:         logger,
+		Version:        version,
+		StaticFS:       dashboardFS(),
+		Sessions:       sessions,
+		Events:         bus,
+		Auth:           auth,
+		DB:             db,
+		Harnesses:      harnesses,
+		AllowedIPs:     cfg.AllowedIPs,
+		Identity:       deviceIdentity,
+		Pairing:        pairingMgr,
+		Devices:        deviceStore,
+		Tunnel:         tunnelMgr,
+		IPFilter:       ipFilter,
+		RemoteSettings: remoteSettings,
+		KnownClients:   knownClients,
 	})
 
 	server := &http.Server{
@@ -172,9 +210,6 @@ func serve() error {
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -206,6 +241,9 @@ func serve() error {
 	if pairingMgr != nil {
 		pairingMgr.Stop()
 	}
+	if tunnelMgr != nil {
+		tunnelMgr.Stop()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -227,4 +265,17 @@ func serve() error {
 
 func dashboardFS() fs.FS {
 	return dashboard.FS()
+}
+
+// allowedIPStrings flattens the parsed config allowlist for the runtime filter.
+func allowedIPStrings(entries []config.AllowedIP) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.CIDR != nil {
+			out = append(out, entry.CIDR.String())
+		} else if entry.IP != nil {
+			out = append(out, entry.IP.String())
+		}
+	}
+	return out
 }

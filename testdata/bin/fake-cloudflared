@@ -1,0 +1,34 @@
+#!/bin/sh
+# Fake cloudflared used by tunnel tests.
+#
+# Modes (via FAKE_CLOUDFLARED_MODE):
+#   quick  (default) print a quick-tunnel URL box on stderr, then sleep
+#   token  print a "Registered tunnel connection" line, then sleep
+#   fail   print an error and exit immediately
+#
+# Sleeping uses exec so the shell is replaced by sleep itself; killing the
+# process pid then reliably terminates the whole thing.
+if [ "${1:-}" = "--version" ]; then
+	echo "cloudflared version 2099.9.9 (fake)"
+	exit 0
+fi
+
+case "${FAKE_CLOUDFLARED_MODE:-quick}" in
+	fail)
+		echo "ERR failed to start quick tunnel" >&2
+		exit 1
+		;;
+	token)
+		echo "INF Registered tunnel connection connIndex=0 location=FAKE" >&2
+		exec sleep 600
+		;;
+	*)
+		cat >&2 <<'EOF'
++--------------------------------------------------------------------------------------------+
+|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+|  https://fake-tunnel-abc.trycloudflare.com                                                 |
++--------------------------------------------------------------------------------------------+
+EOF
+		exec sleep 600
+		;;
+esac

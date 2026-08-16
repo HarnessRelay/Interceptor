@@ -126,6 +126,8 @@ export type CommandCatalog = {
 export type AuthStatus = {
   authenticated: boolean;
   csrf_token?: string;
+  client_class?: "host" | "lan" | "tunnel";
+  token_login_allowed?: boolean;
 };
 
 export type PairingRequest = {
@@ -133,6 +135,8 @@ export type PairingRequest = {
   device_name: string;
   platform: string;
   public_key: string;
+  type?: string;
+  code?: string;
   received_at: string;
 };
 
@@ -141,12 +145,73 @@ export type PairedDevice = {
   device_name: string;
   platform: string;
   public_key: string;
+  type?: string;
+  custom_name?: string;
   paired_at: string;
   last_seen: string;
+};
+
+export type WebPairingSubmit = {
+  request_id: string;
+  code: string;
+  secret: string;
+};
+
+export type WebPairingPoll = {
+  status: "pending" | "accepted" | "rejected" | "expired" | "unknown";
+  device_token?: string;
+};
+
+export type NetworkSettings = {
+  remote_access_enabled: boolean;
+  lan_ips: string[];
+  allowlist: string[];
+  banlist: string[];
+};
+
+export type NetworkClient = {
+  key: string;
+  ip: string;
+  class: "host" | "lan" | "tunnel";
+  mac?: string;
+  hostname?: string;
+  custom_name?: string;
+  first_seen: number;
+  last_seen: number;
+  active_connections: number;
 };
 
 export type DaemonIdentity = {
   device_id: string;
   device_name: string;
   public_key: string;
+};
+
+export type TunnelInfo = {
+  status: "stopped" | "starting" | "running" | "error";
+  url?: string;
+  error?: string;
+};
+
+export type TunnelAvailable = {
+  available: boolean;
+  binary: string;
+};
+
+export type TunnelConfig = {
+  mode: "quick" | "token";
+  hostname?: string;
+  token_set: boolean;
+};
+
+export type TunnelBinary = {
+  path?: string;
+  source?: "env" | "managed" | "path" | "common";
+  version?: string;
+  managed_path: string;
+};
+
+export type TunnelDownload = {
+  version: string;
+  path: string;
 };

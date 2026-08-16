@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,12 @@ const (
 	CSRFHeaderName    = "X-CSRF-Token"
 )
 
+// Cookie session kinds.
+const (
+	SessionKindHost   = "host"
+	SessionKindDevice = "device"
+)
+
 var (
 	ErrUnauthenticated = errors.New("unauthenticated")
 	ErrForbidden       = errors.New("forbidden")
@@ -29,6 +36,13 @@ type Principal struct {
 	Actor      string
 	CSRFToken  string
 	FromCookie bool
+	// Master marks the static daemon token or a login it produced. Master
+	// credentials are only accepted from the host machine.
+	Master bool
+	// DeviceID is set for paired-device principals (signature or web token).
+	DeviceID string
+	// SessionKind is set for cookie sessions (host or device).
+	SessionKind string
 }
 
 type Authenticator struct {
@@ -42,6 +56,9 @@ type Authenticator struct {
 type sessionRecord struct {
 	CSRFToken string
 	ExpiresAt time.Time
+	Actor     string
+	Kind      string
+	DeviceID  string
 }
 
 func NewAuthenticator(token string) *Authenticator {
@@ -63,6 +80,23 @@ func GenerateToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+// GenerateDeviceToken creates a new opaque web-device credential with the
+// hrk_ prefix plus its SHA-256 hex hash for storage.
+func GenerateDeviceToken() (token, tokenHash string) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	token = DeviceTokenPrefix + base64.RawURLEncoding.EncodeToString(b)
+	tokenHash = HashDeviceToken(token)
+	return token, tokenHash
+}
+
+func HashDeviceToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 func (a *Authenticator) SetPairedDeviceStore(devices *PairedDeviceStore) {
 	a.devices = devices
 }
@@ -72,15 +106,28 @@ func (a *Authenticator) CheckToken(token string) bool {
 	return subtle.ConstantTimeCompare(hash[:], a.tokenHash[:]) == 1
 }
 
+// Login exchanges the static daemon token for a host cookie session. Only
+// meaningful for host clients; callers must reject it remotely.
 func (a *Authenticator) Login(w http.ResponseWriter, token string) (Principal, bool) {
 	if !a.CheckToken(token) {
 		return Principal{}, false
 	}
+	return a.newSession(w, "local", SessionKindHost, true, ""), true
+}
+
+// LoginDevice mints a device cookie session for an already-authenticated
+// device principal. Device sessions are valid from any client class (host,
+// LAN, tunnel) so browser WebSockets work uniformly through cookies.
+func (a *Authenticator) LoginDevice(w http.ResponseWriter, principal Principal) Principal {
+	return a.newSession(w, principal.Actor, SessionKindDevice, false, principal.DeviceID)
+}
+
+func (a *Authenticator) newSession(w http.ResponseWriter, actor, kind string, master bool, deviceID string) Principal {
 	sessionID := GenerateToken()
 	csrf := GenerateToken()
 	expires := a.now().Add(12 * time.Hour)
 	a.mu.Lock()
-	a.sessions[sessionID] = sessionRecord{CSRFToken: csrf, ExpiresAt: expires}
+	a.sessions[sessionID] = sessionRecord{CSRFToken: csrf, ExpiresAt: expires, Actor: actor, Kind: kind, DeviceID: deviceID}
 	a.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
@@ -91,13 +138,22 @@ func (a *Authenticator) Login(w http.ResponseWriter, token string) (Principal, b
 		Expires:  expires,
 		MaxAge:   int(time.Until(expires).Seconds()),
 	})
-	return Principal{Actor: "local", CSRFToken: csrf, FromCookie: true}, true
+	return Principal{Actor: actor, CSRFToken: csrf, FromCookie: true, Master: master, SessionKind: kind, DeviceID: deviceID}
 }
 
 func (a *Authenticator) Authenticate(r *http.Request) (Principal, error) {
 	if token := bearerToken(r); token != "" {
 		if a.CheckToken(token) {
-			return Principal{Actor: "local"}, nil
+			return Principal{Actor: "local", Master: true}, nil
+		}
+		if strings.HasPrefix(token, DeviceTokenPrefix) {
+			if a.devices != nil {
+				if dev, ok := a.devices.FindByTokenHash(HashDeviceToken(token)); ok {
+					a.devices.Touch(dev.DeviceID)
+					return Principal{Actor: dev.DeviceID, DeviceID: dev.DeviceID}, nil
+				}
+			}
+			return Principal{}, ErrUnauthenticated
 		}
 		return Principal{}, ErrUnauthenticated
 	}
@@ -118,9 +174,17 @@ func (a *Authenticator) Authenticate(r *http.Request) (Principal, error) {
 		delete(a.sessions, cookie.Value)
 		return Principal{}, ErrUnauthenticated
 	}
-	return Principal{Actor: "local", CSRFToken: record.CSRFToken, FromCookie: true}, nil
+	return Principal{
+		Actor:       record.Actor,
+		CSRFToken:   record.CSRFToken,
+		FromCookie:  true,
+		Master:      record.Kind == SessionKindHost,
+		SessionKind: record.Kind,
+		DeviceID:    record.DeviceID,
+	}, nil
 }
 
+// Authorize authenticates the request and enforces CSRF for cookie sessions.
 func (a *Authenticator) Authorize(r *http.Request) (Principal, error) {
 	principal, err := a.Authenticate(r)
 	if err != nil {
@@ -130,6 +194,22 @@ func (a *Authenticator) Authorize(r *http.Request) (Principal, error) {
 		if r.Header.Get(CSRFHeaderName) != principal.CSRFToken {
 			return Principal{}, ErrForbidden
 		}
+	}
+	return principal, nil
+}
+
+// AuthorizeRequest is Authorize plus the client-class policy: master
+// credentials (static token or host login sessions) are rejected from any
+// client that is not the host machine. Device credentials are valid
+// everywhere. Network-level gating (allowlist/banlist/remote toggle) is
+// enforced by middleware before this runs.
+func (a *Authenticator) AuthorizeRequest(r *http.Request) (Principal, error) {
+	principal, err := a.Authorize(r)
+	if err != nil {
+		return principal, err
+	}
+	if principal.Master && ClassifyClient(r).Class != ClientClassHost {
+		return Principal{}, ErrForbidden
 	}
 	return principal, nil
 }
@@ -200,7 +280,7 @@ func (a *Authenticator) authenticateDeviceSignature(r *http.Request) (Principal,
 	}
 
 	a.devices.Touch(deviceID)
-	return Principal{Actor: deviceID}, nil
+	return Principal{Actor: deviceID, DeviceID: deviceID}, nil
 }
 
 func sha256Hash(r *http.Request) string {

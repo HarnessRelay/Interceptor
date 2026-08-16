@@ -22,7 +22,6 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/harnessrelay/interceptor/internal/config"
 	"github.com/harnessrelay/interceptor/internal/events"
 	"github.com/harnessrelay/interceptor/internal/harness"
 	"github.com/harnessrelay/interceptor/internal/security"
@@ -56,89 +55,99 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 }
 
-func TestIPAllowlistMiddleware(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	makeReq := func(remoteAddr string) *http.Request {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-		req.RemoteAddr = remoteAddr
-		return req
+func TestAccessGateMiddleware(t *testing.T) {
+	dir := t.TempDir()
+	filter, err := security.NewIPFilter(
+		filepath.Join(dir, "allowed_ips.txt"),
+		filepath.Join(dir, "banned_ips.txt"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ipfilter: %v", err)
+	}
+	if err := filter.Allow("192.168.1.0/24"); err != nil {
+		t.Fatalf("allow: %v", err)
+	}
+	if err := filter.Ban("10.0.0.9"); err != nil {
+		t.Fatalf("ban: %v", err)
+	}
+	settings, err := security.NewRemoteSettingsStore(dir)
+	if err != nil {
+		t.Fatalf("settings store: %v", err)
 	}
 
 	tests := []struct {
 		name       string
-		allowed    []config.AllowedIP
 		remoteAddr string
+		cfHeader   string
 		wantStatus int
 	}{
-		{
-			name:       "no allowlist allows all",
-			allowed:    nil,
-			remoteAddr: "192.168.1.5:12345",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name: "single IP match",
-			allowed: []config.AllowedIP{
-				{IP: net.ParseIP("192.168.1.5"), CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: net.CIDRMask(32, 32)}},
-			},
-			remoteAddr: "192.168.1.5:12345",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name: "single IP mismatch",
-			allowed: []config.AllowedIP{
-				{IP: net.ParseIP("192.168.1.5"), CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.5"), Mask: net.CIDRMask(32, 32)}},
-			},
-			remoteAddr: "192.168.1.6:12345",
-			wantStatus: http.StatusForbidden,
-		},
-		{
-			name: "CIDR match",
-			allowed: []config.AllowedIP{
-				{CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.0"), Mask: net.CIDRMask(24, 32)}},
-			},
-			remoteAddr: "192.168.1.100:12345",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name: "CIDR mismatch",
-			allowed: []config.AllowedIP{
-				{CIDR: &net.IPNet{IP: net.ParseIP("192.168.1.0"), Mask: net.CIDRMask(24, 32)}},
-			},
-			remoteAddr: "192.168.2.100:12345",
-			wantStatus: http.StatusForbidden,
-		},
-		{
-			name: "IPv6 match",
-			allowed: []config.AllowedIP{
-				{IP: net.ParseIP("::1"), CIDR: &net.IPNet{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)}},
-			},
-			remoteAddr: "[::1]:12345",
-			wantStatus: http.StatusOK,
-		},
-		{
-			name: "IPv6 mismatch",
-			allowed: []config.AllowedIP{
-				{IP: net.ParseIP("::1"), CIDR: &net.IPNet{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)}},
-			},
-			remoteAddr: "[::2]:12345",
-			wantStatus: http.StatusForbidden,
-		},
+		{name: "host always allowed", remoteAddr: "127.0.0.1:4", wantStatus: http.StatusOK},
+		{name: "lan in allowlist", remoteAddr: "192.168.1.5:4", wantStatus: http.StatusOK},
+		{name: "lan outside allowlist blocked", remoteAddr: "10.1.1.1:4", wantStatus: http.StatusForbidden},
+		{name: "lan banned blocked", remoteAddr: "10.0.0.9:4", wantStatus: http.StatusForbidden},
+		{name: "tunnel client real ip banned", remoteAddr: "127.0.0.1:4", cfHeader: "10.0.0.9", wantStatus: http.StatusForbidden},
+		{name: "tunnel client not filtered by lan allowlist", remoteAddr: "127.0.0.1:4", cfHeader: "203.0.113.9", wantStatus: http.StatusOK},
+		{name: "remote disabled blocks lan", remoteAddr: "192.168.1.5:4", wantStatus: http.StatusForbidden},
 	}
 
-	for _, tt := range tests {
+	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := ipAllowlistMiddleware(tt.allowed, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			}))
+			if tt.name == "remote disabled blocks lan" {
+				if err := settings.Set(security.RemoteSettings{RemoteAccessEnabled: false}); err != nil {
+					t.Fatalf("disable remote: %v", err)
+				}
+				defer func() {
+					_ = settings.Set(security.RemoteSettings{RemoteAccessEnabled: true})
+				}()
+			}
+			router := NewRouter(Options{
+				Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+				StaticFS:       testStaticFS(),
+				Harnesses:      []harness.Detected{},
+				IPFilter:       filter,
+				RemoteSettings: settings,
+			})
+			// /api/v1/auth/status is unauthenticated, so a 200 proves the
+			// request passed the gate; 403 means the gate blocked it.
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/status", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.cfHeader != "" {
+				req.Header.Set(security.CFConnectingIPHeader, tt.cfHeader)
+			}
 			rec := httptest.NewRecorder()
-			req := makeReq(tt.remoteAddr)
-			handler.ServeHTTP(rec, req)
+			router.ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d, body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+				t.Fatalf("case %d status = %d, want %d, body = %s", i, rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
+	}
+
+	// Health stays reachable for remote clients even when everything else is
+	// gated; static content is blocked.
+	if err := settings.Set(security.RemoteSettings{RemoteAccessEnabled: false}); err != nil {
+		t.Fatalf("disable remote: %v", err)
+	}
+	router := NewRouter(Options{
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		StaticFS:       testStaticFS(),
+		Harnesses:      []harness.Detected{},
+		IPFilter:       filter,
+		RemoteSettings: settings,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.168.1.5:4"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("static content for remote client while disabled = %d, want 403", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req.RemoteAddr = "192.168.1.5:4"
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health for remote client while disabled = %d, want 200", rec.Code)
 	}
 }
 
@@ -703,6 +712,7 @@ func TestWebSocketRequiresUpgrade(t *testing.T) {
 func TestWebSocketRejectsUnknownSessionFilter(t *testing.T) {
 	router, _, _ := newTestRouter()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws?session_id=ses_missing", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
@@ -738,6 +748,7 @@ func TestCookieAuthRequiresCSRFForUnsafeRequests(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(`{"command":"/bin/sh"}`))
+	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Content-Type", "application/json")
 	for _, cookie := range loginRec.Result().Cookies() {
 		req.AddCookie(cookie)
@@ -749,6 +760,7 @@ func TestCookieAuthRequiresCSRFForUnsafeRequests(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(`{"command":"/bin/sh","args":["`+fixturePath(t, "plain-output.sh")+`"]}`))
+	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(security.CSRFHeaderName, auth.CSRFToken)
 	for _, cookie := range loginRec.Result().Cookies() {
@@ -1098,6 +1110,9 @@ func serveRawJSON(t *testing.T, router http.Handler, method, path string, body a
 		reader = &buf
 	}
 	req := httptest.NewRequest(method, path, reader)
+	// Model a host client (loopback); the class policy rejects master-token
+	// requests from LAN/tunnel clients, and these tests use the master token.
+	req.RemoteAddr = "127.0.0.1:12345"
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

@@ -1,4 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+// Hermetic XDG dirs keep the QA daemon away from the developer's real
+// HarnessRelay config (paired devices, network lists) and session archive.
+const qaHome = mkdtempSync(path.join(tmpdir(), "harnessrelay-qa-"));
 
 export default defineConfig({
   testDir: "./qa/playwright",
@@ -22,7 +29,13 @@ export default defineConfig({
     command: "HARNESSRELAY_TOKEN=dashboard-token HARNESSRELAY_PORT=8767 HARNESSRELAY_ENABLE_FAKE_ADAPTER=1 ./bin/harnessd serve",
     url: "http://127.0.0.1:8767/api/v1/health",
     reuseExistingServer: false,
-    timeout: 20_000
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: path.join(qaHome, "config"),
+      XDG_DATA_HOME: path.join(qaHome, "data"),
+      XDG_STATE_HOME: path.join(qaHome, "state")
+    } as Record<string, string>
   },
   projects: [
     {

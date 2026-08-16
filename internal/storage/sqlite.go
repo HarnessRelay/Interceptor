@@ -283,15 +283,15 @@ func scanSession(s scanner) (session.Info, error) {
 }
 
 var persistedTypes = map[events.Type]bool{
-	events.TypeChatUserMessage:     true,
+	events.TypeChatUserMessage:      true,
 	events.TypeChatAssistantMessage: true,
-	events.TypeChatSystemMessage:   true,
-	events.TypeApprovalRequired:    true,
-	events.TypeApprovalResolved:    true,
-	events.TypeHarnessStatus:       true,
-	events.TypeHarnessMetadata:     true,
+	events.TypeChatSystemMessage:    true,
+	events.TypeApprovalRequired:     true,
+	events.TypeApprovalResolved:     true,
+	events.TypeHarnessStatus:        true,
+	events.TypeHarnessMetadata:      true,
 	events.TypeSessionStatusChanged: true,
-	events.TypeSessionExited:       true,
+	events.TypeSessionExited:        true,
 }
 
 func isPersistedType(typ events.Type) bool {

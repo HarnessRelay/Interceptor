@@ -830,6 +830,121 @@ Goal: keep common behavior adapter-neutral and prove cross-harness extension.
 
 ---
 
+# Phase 20 — Cloudflare Tunnel Remote Access
+
+Goal: expose the dashboard remotely through an app-managed cloudflared without
+opening inbound ports or weakening localhost-first defaults.
+
+## 20.1 Tunnel process manager
+
+- [x] Fix tunnel lifecycle: bind the cloudflared child to the daemon shutdown
+  context instead of the HTTP request context that killed it immediately
+  ("cloudflared exited: signal: killed").
+  - Phase: 20.1
+  - Owner/agent: ZCode
+  - Reason: tunnel died the moment POST /tunnel/start returned.
+  - Files likely affected: `internal/tunnel/tunnel.go`, `cmd/harnessd/main.go`, `internal/api/router.go`
+  - Acceptance criteria:
+    - Tunnel reaches and stays `running` after the start response.
+    - Daemon shutdown or explicit stop terminates cloudflared.
+  - Tests required:
+    - Unit tests with `testdata/bin/fake-cloudflared` (lifecycle, idempotent
+      start, immediate-exit error, restart after error, daemon-ctx kill).
+    - HTTP-level regression test through the router.
+- [x] Harden the process: `--no-autoupdate` flag, stderr ring buffer for the
+  debug console, drain-then-wait to avoid losing log lines.
+- [x] Add quick-tunnel URL detection and token-mode `Registered tunnel
+  connection` detection.
+
+## 20.2 Managed cloudflared binary
+
+- [x] Resolve cloudflared from env override → managed copy → PATH → common
+  install directories; explicit env override is authoritative when broken.
+- [x] Download the latest official release from Cloudflare's GitHub releases
+  with digest verification, `--version` sanity check, and atomic swap keeping
+  `cloudflared.previous` as rollback; failures never damage an existing
+  install.
+- [x] Wire `GET /tunnel/binary` and `POST /tunnel/download` API endpoints.
+- [x] Best-effort download in `scripts/install.sh` (skippable via
+  `HARNESSRELAY_SKIP_CLOUDFLARED_DOWNLOAD=1`); uninstall --purge removes it
+  with the data dir.
+
+## 20.3 Tunnel modes and API
+
+- [x] Add named-tunnel mode (`cloudflared tunnel run --token`) with persisted,
+  never-echoed token (`tunnel.json`, 0600) and optional informational hostname
+  label.
+- [x] Add `GET/PUT /tunnel/config` (409 while running, 400 on invalid input)
+  and `GET /tunnel/logs`.
+- [x] Rate-limit token login per client IP (5/minute).
+
+## 20.4 Verification
+
+- [x] Unit and router tests for every tunnel endpoint (auth required,
+  lifecycle, config validation, download success/failure paths).
+- [x] End-to-end verification against real Cloudflare: managed download
+  (2026.8.2), real quick tunnel URL serving the dashboard, 401 without token
+  through the tunnel, login with token through the tunnel, stop, and
+  daemon-shutdown process cleanup.
+- [x] Update README remote-access section, `Docs/API.md`, and this checklist.
+
+---
+
+# Phase 21 — Unified Remote Auth And Settings
+
+Goal: one approval-based auth model for LAN, tunnel, and paired devices with a
+unified settings view, replacing remote static-token login.
+
+## 21.1 Client classification and auth policy
+
+- [x] Classify clients as host / lan / tunnel (tunnel = loopback + trusted
+  `CF-Connecting-IP`), with tests for spoofed headers from non-loopback.
+- [x] Restrict static-token login and host cookie sessions to the host;
+  device credentials work everywhere.
+
+## 21.2 Device credentials and pairing v2
+
+- [x] Extend paired devices with type (mobile/web), token hash, and custom
+  name; opaque `hrk_` web device tokens.
+- [x] Add 6-digit pairing verification codes shown on both the requesting
+  device and the daemon approval dialog.
+- [x] Add web-device pairing flow (request/poll/claim) usable over LAN and
+  tunnel; exchange device token for a device cookie session for WebSocket
+  compatibility.
+
+## 21.3 Network controls
+
+- [x] Runtime allowlist/banlist management with persistence and hot reload.
+- [x] Remote-access toggle; connected-client tracking with IP, MAC (ARP),
+  hostname, and renameable display names.
+
+## 21.4 Settings UI
+
+- [x] Unified settings view (Devices / Network / Tunnel tabs) replacing the
+  sidebar Pairing/Tunnel panels, following the design system.
+- [x] Remote login flow: request access with 6-digit code instead of the
+  static token on non-host clients.
+- [x] Playwright coverage for settings and remote login; accessibility gates.
+
+## 21.5 Documentation
+
+- [x] Add `Docs/Auth.md` describing pairing codes and tunnel auth for the
+  mobile application.
+- [x] Update README, `Docs/API.md`, and this checklist; run full Go, web
+  build, Playwright, and a11y gates.
+
+## 21.6 Stability fixes found during verification
+
+- [x] Fix pre-existing PTY output race: the runtime closed the PTY master on
+  child exit before the session reader drained buffered output, randomly
+  losing terminal output from fast-exiting harnesses (root cause of
+  flaky `TestSessionSnapshot`/`TestWebSocketStreamsSessionEvents`).
+  The session layer now drains first with a bounded 2s grace period.
+- [x] Fix pre-existing WebSocket event gap: history replay happened before
+  subscribing; subscribe first and deduplicate replayed sequences.
+
+---
+
 # New Task Template
 
 # Phase 17 — Transparent CLI Shim Mode

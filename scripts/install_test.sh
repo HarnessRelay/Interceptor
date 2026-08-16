@@ -33,6 +33,7 @@ run_install() {
 		XDG_DATA_HOME="$home_dir/.local/share" \
 		XDG_STATE_HOME="$home_dir/.local/state" \
 		HARNESSRELAY_SOURCE_BIN_DIR="$source_dir" \
+		HARNESSRELAY_SKIP_CLOUDFLARED_DOWNLOAD=1 \
 		PATH="/usr/bin:/bin" \
 		"$script_dir/install.sh" --skip-build "$@"
 }
@@ -109,5 +110,47 @@ run_install "$purge_home" "$source_dir" >/dev/null
 run_uninstall "$purge_home" --purge >/dev/null
 [ ! -e "$purge_home/.config/harnessrelay" ] || fail "purge preserved config"
 [ ! -e "$purge_home/.local/share/harnessrelay" ] || fail "purge preserved data"
+
+# Managed cloudflared download: skipped by default in these tests...
+default_home="$test_root/cf-default-home"
+run_install "$default_home" "$source_dir" >/dev/null
+[ ! -e "$default_home/.local/share/harnessrelay/bin/cloudflared" ] || fail "install downloaded cloudflared despite skip flag"
+
+# ...and installed when an explicit URL is provided.
+cf_home="$test_root/cf-home"
+cf_source="$test_root/cf-source"
+mkdir -p "$cf_source"
+{
+	printf '%s\n' '#!/bin/sh'
+	printf '%s\n' '[ "${1:-}" = "--version" ] && echo "cloudflared version 2099.0.0 (test)" && exit 0'
+	printf '%s\n' 'exit 1'
+} >"$cf_source/cloudflared"
+chmod 755 "$cf_source/cloudflared"
+env \
+	HOME="$cf_home" \
+	XDG_CONFIG_HOME="$cf_home/.config" \
+	XDG_DATA_HOME="$cf_home/.local/share" \
+	XDG_STATE_HOME="$cf_home/.local/state" \
+	HARNESSRELAY_SOURCE_BIN_DIR="$source_dir" \
+	HARNESSRELAY_CLOUDFLARED_DOWNLOAD_URL="file://$cf_source/cloudflared" \
+	PATH="/usr/bin:/bin" \
+	"$script_dir/install.sh" --skip-build >/dev/null
+[ -x "$cf_home/.local/share/harnessrelay/bin/cloudflared" ] || fail "managed cloudflared was not installed"
+[ "$(stat -c %a "$cf_home/.local/share/harnessrelay/bin/cloudflared")" = 755 ] || fail "managed cloudflared mode is not 0755"
+
+# A downloaded file that fails --version must not be installed.
+cf_bad_home="$test_root/cf-bad-home"
+printf '%s\n' '#!/bin/sh' 'exit 1' >"$cf_source/cloudflared-bad"
+chmod 755 "$cf_source/cloudflared-bad"
+env \
+	HOME="$cf_bad_home" \
+	XDG_CONFIG_HOME="$cf_bad_home/.config" \
+	XDG_DATA_HOME="$cf_bad_home/.local/share" \
+	XDG_STATE_HOME="$cf_bad_home/.local/state" \
+	HARNESSRELAY_SOURCE_BIN_DIR="$source_dir" \
+	HARNESSRELAY_CLOUDFLARED_DOWNLOAD_URL="file://$cf_source/cloudflared-bad" \
+	PATH="/usr/bin:/bin" \
+	"$script_dir/install.sh" --skip-build >/dev/null
+[ ! -e "$cf_bad_home/.local/share/harnessrelay/bin/cloudflared" ] || fail "broken cloudflared download was installed"
 
 printf '%s\n' "install lifecycle tests passed"

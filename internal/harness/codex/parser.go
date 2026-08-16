@@ -42,7 +42,7 @@ type Parser struct {
 	screenFailed   bool
 
 	// Command discovery state
-	discoveredCommands []harness.CommandDescriptor
+	discoveredCommands  []harness.CommandDescriptor
 	commandsInitialized bool
 	lastDiscoveryOutput string
 }

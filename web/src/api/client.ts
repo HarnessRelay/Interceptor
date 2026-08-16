@@ -1,10 +1,36 @@
-import type { AuthStatus, CommandCatalog, CreateForm, DaemonIdentity, EventEnvelope, HarnessCommand, HarnessPreset, PairedDevice, PairingRequest, SemanticAction, Session, Snapshot } from "../types";
+import type { AuthStatus, CommandCatalog, CreateForm, DaemonIdentity, EventEnvelope, HarnessCommand, HarnessPreset, NetworkClient, NetworkSettings, PairedDevice, PairingRequest, SemanticAction, Session, Snapshot, TunnelAvailable, TunnelBinary, TunnelConfig, TunnelDownload, TunnelInfo, WebPairingPoll, WebPairingSubmit } from "../types";
 import { encodeBase64, isUnsafeMethod, splitArgs } from "../utils";
 
 let csrfToken = "";
 
 export function setCSRFToken(token: string) {
   csrfToken = token;
+}
+
+const deviceTokenKey = "harnessrelay.deviceToken";
+
+export function getDeviceToken(): string | null {
+  try {
+    return localStorage.getItem(deviceTokenKey);
+  } catch {
+    return null;
+  }
+}
+
+export function setDeviceToken(token: string) {
+  try {
+    localStorage.setItem(deviceTokenKey, token);
+  } catch {
+    // Device token persistence is best-effort; cookie sessions still work.
+  }
+}
+
+export function clearDeviceToken() {
+  try {
+    localStorage.removeItem(deviceTokenKey);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 export const api = {
@@ -15,6 +41,27 @@ export const api = {
     return request<AuthStatus>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ token }),
+      skipCSRF: true,
+      skipAuthRedirect: true
+    });
+  },
+  async requestWebPairing(deviceName: string): Promise<WebPairingSubmit> {
+    return request<WebPairingSubmit>("/api/v1/pairing/web", {
+      method: "POST",
+      body: JSON.stringify({ device_name: deviceName }),
+      skipCSRF: true,
+      skipAuthRedirect: true
+    });
+  },
+  async pollWebPairing(requestID: string, secret: string): Promise<WebPairingPoll> {
+    return request<WebPairingPoll>(`/api/v1/pairing/web/${encodeURIComponent(requestID)}`, {
+      headers: { "X-Pairing-Secret": secret },
+      skipAuthRedirect: true
+    });
+  },
+  async mintDeviceSession(): Promise<AuthStatus> {
+    return request<AuthStatus>("/api/v1/auth/device-session", {
+      method: "POST",
       skipCSRF: true,
       skipAuthRedirect: true
     });
@@ -141,8 +188,88 @@ export const api = {
       method: "DELETE"
     });
   },
+  async renamePairedDevice(deviceID: string, name: string): Promise<void> {
+    await request(`/api/v1/pairing/devices/${encodeURIComponent(deviceID)}/name`, {
+      method: "PUT",
+      body: JSON.stringify({ name })
+    });
+  },
+  async networkSettings(): Promise<NetworkSettings> {
+    return request<NetworkSettings>("/api/v1/network/settings");
+  },
+  async updateNetworkSettings(remoteAccessEnabled: boolean): Promise<NetworkSettings> {
+    return request<NetworkSettings>("/api/v1/network/settings", {
+      method: "PUT",
+      body: JSON.stringify({ remote_access_enabled: remoteAccessEnabled })
+    });
+  },
+  async addAllowEntry(entry: string): Promise<NetworkSettings> {
+    return request<NetworkSettings>("/api/v1/network/allow", {
+      method: "POST",
+      body: JSON.stringify({ entry })
+    });
+  },
+  async removeAllowEntry(entry: string): Promise<NetworkSettings> {
+    return request<NetworkSettings>("/api/v1/network/allow", {
+      method: "DELETE",
+      body: JSON.stringify({ entry })
+    });
+  },
+  async addBanEntry(entry: string): Promise<NetworkSettings> {
+    return request<NetworkSettings>("/api/v1/network/ban", {
+      method: "POST",
+      body: JSON.stringify({ entry })
+    });
+  },
+  async removeBanEntry(entry: string): Promise<NetworkSettings> {
+    return request<NetworkSettings>("/api/v1/network/ban", {
+      method: "DELETE",
+      body: JSON.stringify({ entry })
+    });
+  },
+  async networkClients(): Promise<NetworkClient[]> {
+    const data = await request<{ clients: NetworkClient[] }>("/api/v1/network/clients");
+    return data.clients;
+  },
+  async renameNetworkClient(key: string, name: string): Promise<void> {
+    await request(`/api/v1/network/clients/${encodeURIComponent(key)}/name`, {
+      method: "PUT",
+      body: JSON.stringify({ name })
+    });
+  },
   async daemonIdentity(): Promise<DaemonIdentity> {
     return request<DaemonIdentity>("/api/v1/identity");
+  },
+  async tunnelAvailable(): Promise<TunnelAvailable> {
+    return request<TunnelAvailable>("/api/v1/tunnel/available");
+  },
+  async tunnelStatus(): Promise<TunnelInfo> {
+    return request<TunnelInfo>("/api/v1/tunnel");
+  },
+  async tunnelStart(): Promise<TunnelInfo> {
+    return request<TunnelInfo>("/api/v1/tunnel/start", { method: "POST" });
+  },
+  async tunnelStop(): Promise<TunnelInfo> {
+    return request<TunnelInfo>("/api/v1/tunnel/stop", { method: "POST" });
+  },
+  async tunnelConfig(): Promise<TunnelConfig> {
+    return request<TunnelConfig>("/api/v1/tunnel/config");
+  },
+  async updateTunnelConfig(config: { mode: string; token?: string; hostname?: string }): Promise<TunnelConfig> {
+    return request<TunnelConfig>("/api/v1/tunnel/config", {
+      method: "PUT",
+      body: JSON.stringify(config)
+    });
+  },
+  async tunnelBinary(): Promise<TunnelBinary> {
+    return request<TunnelBinary>("/api/v1/tunnel/binary");
+  },
+  async tunnelDownload(): Promise<TunnelDownload> {
+    return request<TunnelDownload>("/api/v1/tunnel/download", { method: "POST" });
+  },
+  async tunnelLogs(): Promise<string[]> {
+    const data = await request<{ lines: string[] }>("/api/v1/tunnel/logs");
+    return data.lines;
   }
 };
 
@@ -158,6 +285,10 @@ async function request<T>(path: string, init: APIRequestInit = {}): Promise<T> {
   };
   if (!init.skipCSRF && csrfToken && isUnsafeMethod(init.method || "GET")) {
     headers["X-CSRF-Token"] = csrfToken;
+  }
+  const deviceToken = getDeviceToken();
+  if (deviceToken && !headers["Authorization"]) {
+    headers["Authorization"] = `Bearer ${deviceToken}`;
   }
   const response = await fetch(path, {
     ...init,

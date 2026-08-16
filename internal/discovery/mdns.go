@@ -9,15 +9,15 @@ import (
 )
 
 const (
-	ServiceType = "_harnessrelay._tcp"
+	ServiceType   = "_harnessrelay._tcp"
 	ServiceDomain = "local"
 )
 
 type Config struct {
-	DeviceID   string
-	DeviceName string
-	Port       int
-	Version    string
+	DeviceID    string
+	DeviceName  string
+	Port        int
+	Version     string
 	Fingerprint string // short 8-char hex fingerprint
 }
 

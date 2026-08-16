@@ -6,7 +6,6 @@ import { AdapterBadge } from "./AdapterBadge";
 import { Dialog } from "./Dialog";
 import { LogoMark } from "./LoginScreen";
 import { ModeToggle } from "./ModeToggle";
-import { PairingPanel } from "./PairingPanel";
 import { StatusBadge } from "./StatusBadge";
 
 type Filter = "all" | "running" | "finished";
@@ -16,6 +15,8 @@ export function Sidebar({
   harnesses,
   activeID,
   loading,
+  settingsOpen,
+  onOpenSettings,
   onRefresh,
   onCreated,
   onError,
@@ -27,6 +28,8 @@ export function Sidebar({
   harnesses: HarnessPreset[];
   activeID: string | null;
   loading: boolean;
+  settingsOpen: boolean;
+  onOpenSettings: () => void;
   onRefresh: () => void;
   onCreated: (session: Session, mode: ViewMode) => void;
   onError: (message: string) => void;
@@ -98,7 +101,7 @@ export function Sidebar({
         onCreate={() => setCreateOpen(true)}
       />
 
-      <PairingPanel />
+      <SettingsEntry open={settingsOpen} onOpen={onOpenSettings} />
 
       <div className="sidebar-footer">
         <span className="local-indicator"><span aria-hidden="true" /> Local daemon</span>
@@ -383,6 +386,54 @@ function parseEnvironment(value: string): Record<string, string> {
 
 function isSessionLive(session: Session) {
   return session.status === "starting" || session.status === "running";
+}
+
+// SettingsEntry is the sidebar footer entry into the unified settings view.
+// It shows lightweight status dots: pending connection requests and an
+// active tunnel.
+function SettingsEntry({ open, onOpen }: { open: boolean; onOpen: () => void }) {
+  const [pending, setPending] = useState(0);
+  const [tunnelOn, setTunnelOn] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const [requests, tunnel] = await Promise.all([api.pairingRequests(), api.tunnelStatus()]);
+        if (cancelled) return;
+        setPending(requests.length);
+        setTunnelOn(tunnel.status === "running" || tunnel.status === "starting");
+      } catch {
+        // Status badges are best-effort.
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  return (
+    <div className="settings-entry">
+      <button
+        type="button"
+        className={open ? "settings-toggle is-selected" : "settings-toggle"}
+        aria-pressed={open}
+        onClick={onOpen}
+      >
+        <span aria-hidden="true">⚙</span>
+        Settings
+        {pending > 0 && (
+          <span className="settings-badge" title={`${pending} pending connection request${pending > 1 ? "s" : ""}`}>
+            {pending}
+          </span>
+        )}
+        {tunnelOn && <span className="settings-dot on" title="Remote tunnel active" />}
+      </button>
+    </div>
+  );
 }
 
 function relativeTime(value: string) {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -21,6 +20,7 @@ import (
 	"github.com/harnessrelay/interceptor/internal/security"
 	"github.com/harnessrelay/interceptor/internal/session"
 	"github.com/harnessrelay/interceptor/internal/storage"
+	"github.com/harnessrelay/interceptor/internal/tunnel"
 )
 
 type Options struct {
@@ -37,6 +37,26 @@ type Options struct {
 	Identity   *security.DeviceIdentity
 	Pairing    *security.PairingManager
 	Devices    *security.PairedDeviceStore
+	Tunnel     *tunnel.Manager
+
+	// IPFilter is the runtime allow/ban list; when nil no network gating
+	// beyond class policy applies.
+	IPFilter *security.IPFilter
+	// RemoteSettings backs the remote-access toggle.
+	RemoteSettings *security.RemoteSettingsStore
+	// KnownClients stores user-assigned network client names.
+	KnownClients *security.KnownClientStore
+
+	// TunnelDownloadAPI overrides the cloudflared releases endpoint (tests).
+	TunnelDownloadAPI string
+
+	// loginLimiter throttles token login attempts per client IP; created in
+	// NewRouter so every router instance gets its own limiter.
+	loginLimiter *rateLimiter
+	// pairingLimiter throttles unauthenticated pairing submissions.
+	pairingLimiter *rateLimiter
+	// clients tracks observed network clients for the settings view.
+	clients *clientTracker
 }
 
 type healthResponse struct {
@@ -54,8 +74,10 @@ type loginRequest struct {
 }
 
 type authStatusResponse struct {
-	Authenticated bool   `json:"authenticated"`
-	CSRFToken     string `json:"csrf_token,omitempty"`
+	Authenticated     bool   `json:"authenticated"`
+	CSRFToken         string `json:"csrf_token,omitempty"`
+	ClientClass       string `json:"client_class"`
+	TokenLoginAllowed bool   `json:"token_login_allowed"`
 }
 
 type sessionResponse struct {
@@ -237,6 +259,45 @@ type pairedDevicesResponse struct {
 	Devices []security.PairedDevice `json:"devices"`
 }
 
+type tunnelResponse struct {
+	Status string `json:"status"`
+	URL    string `json:"url,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type tunnelAvailableResponse struct {
+	Available bool   `json:"available"`
+	Binary    string `json:"binary"`
+}
+
+type tunnelConfigRequest struct {
+	Mode     string `json:"mode"`
+	Token    string `json:"token"`
+	Hostname string `json:"hostname"`
+}
+
+type tunnelConfigResponse struct {
+	Mode     string `json:"mode"`
+	Hostname string `json:"hostname,omitempty"`
+	TokenSet bool   `json:"token_set"`
+}
+
+type tunnelBinaryResponse struct {
+	Path        string `json:"path,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Version     string `json:"version,omitempty"`
+	ManagedPath string `json:"managed_path"`
+}
+
+type tunnelDownloadResponse struct {
+	Version string `json:"version"`
+	Path    string `json:"path"`
+}
+
+type tunnelLogsResponse struct {
+	Lines []string `json:"lines"`
+}
+
 var requestCounter uint64
 
 func NewRouter(opts Options) http.Handler {
@@ -264,6 +325,9 @@ func NewRouter(opts Options) http.Handler {
 	if opts.Harnesses == nil {
 		opts.Harnesses = harness.DiscoverInstalled(context.Background())
 	}
+	opts.loginLimiter = newRateLimiter(loginRateWindow, loginRateMax)
+	opts.pairingLimiter = newRateLimiter(pairingRateWindow, pairingRateMax)
+	opts.clients = newClientTracker()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -302,30 +366,68 @@ func NewRouter(opts Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/pairing/reject", opts.requireAuth(opts.handlePairingReject))
 	mux.HandleFunc("GET /api/v1/pairing/devices", opts.requireAuth(opts.handlePairingDevices))
 	mux.HandleFunc("DELETE /api/v1/pairing/devices/{id}", opts.requireAuth(opts.handlePairingDeviceRemove))
+	mux.HandleFunc("GET /api/v1/tunnel/available", opts.requireAuth(opts.handleTunnelAvailable))
+	mux.HandleFunc("GET /api/v1/tunnel", opts.requireAuth(opts.handleTunnelStatus))
+	mux.HandleFunc("POST /api/v1/tunnel/start", opts.requireAuth(opts.handleTunnelStart))
+	mux.HandleFunc("POST /api/v1/tunnel/stop", opts.requireAuth(opts.handleTunnelStop))
+	mux.HandleFunc("GET /api/v1/tunnel/config", opts.requireAuth(opts.handleTunnelConfigGet))
+	mux.HandleFunc("PUT /api/v1/tunnel/config", opts.requireAuth(opts.handleTunnelConfigPut))
+	mux.HandleFunc("GET /api/v1/tunnel/binary", opts.requireAuth(opts.handleTunnelBinary))
+	mux.HandleFunc("POST /api/v1/tunnel/download", opts.requireAuth(opts.handleTunnelDownload))
+	mux.HandleFunc("GET /api/v1/tunnel/logs", opts.requireAuth(opts.handleTunnelLogs))
+	mux.HandleFunc("POST /api/v1/auth/device-session", opts.requireAuth(opts.handleDeviceSession))
+	mux.HandleFunc("POST /api/v1/pairing/web", opts.handlePairingWebSubmit)
+	mux.HandleFunc("GET /api/v1/pairing/web/{id}", opts.handlePairingWebPoll)
+	mux.HandleFunc("PUT /api/v1/pairing/devices/{id}/name", opts.requireAuth(opts.handlePairingDeviceRename))
+	mux.HandleFunc("GET /api/v1/network/settings", opts.requireAuth(opts.handleNetworkSettingsGet))
+	mux.HandleFunc("PUT /api/v1/network/settings", opts.requireAuth(opts.handleNetworkSettingsPut))
+	mux.HandleFunc("POST /api/v1/network/allow", opts.requireAuth(opts.handleNetworkAllowAdd))
+	mux.HandleFunc("DELETE /api/v1/network/allow", opts.requireAuth(opts.handleNetworkAllowRemove))
+	mux.HandleFunc("POST /api/v1/network/ban", opts.requireAuth(opts.handleNetworkBanAdd))
+	mux.HandleFunc("DELETE /api/v1/network/ban", opts.requireAuth(opts.handleNetworkBanRemove))
+	mux.HandleFunc("GET /api/v1/network/clients", opts.requireAuth(opts.handleNetworkClients))
+	mux.HandleFunc("PUT /api/v1/network/clients/{key}/name", opts.requireAuth(opts.handleNetworkClientRename))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
 	mux.Handle("/", http.FileServerFS(opts.StaticFS))
 
 	handler := requestLogMiddleware(opts.Logger, mux)
-	if len(opts.AllowedIPs) > 0 {
-		handler = ipAllowlistMiddleware(opts.AllowedIPs, opts.Logger)(handler)
-	}
+	handler = opts.accessGateMiddleware(handler)
 	return handler
 }
 
 func (opts Options) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
-	principal, err := opts.Auth.Authenticate(r)
+	info := security.ClassifyClient(r)
+	// GET request, so AuthorizeRequest applies class policy without CSRF.
+	principal, err := opts.Auth.AuthorizeRequest(r)
 	if err != nil {
-		writeJSON(w, http.StatusOK, authStatusResponse{Authenticated: false})
+		writeJSON(w, http.StatusOK, authStatusResponse{
+			Authenticated:     false,
+			ClientClass:       string(info.Class),
+			TokenLoginAllowed: info.Class == security.ClientClassHost,
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, authStatusResponse{Authenticated: true, CSRFToken: principal.CSRFToken})
+	writeJSON(w, http.StatusOK, authStatusResponse{
+		Authenticated:     true,
+		CSRFToken:         principal.CSRFToken,
+		ClientClass:       string(info.Class),
+		TokenLoginAllowed: info.Class == security.ClientClassHost,
+	})
 }
 
 func (opts Options) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if !security.SameOrigin(r) {
 		writeError(w, http.StatusForbidden, "unexpected origin")
+		return
+	}
+	if !opts.loginLimiter.allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many login attempts; try again later")
+		return
+	}
+	if info := security.ClassifyClient(r); info.Class != security.ClientClassHost {
+		writeError(w, http.StatusForbidden, "token login is only available on the host machine; request device access instead")
 		return
 	}
 	var req loginRequest
@@ -338,7 +440,36 @@ func (opts Options) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
-	writeJSON(w, http.StatusOK, authStatusResponse{Authenticated: true, CSRFToken: principal.CSRFToken})
+	writeJSON(w, http.StatusOK, authStatusResponse{
+		Authenticated:     true,
+		CSRFToken:         principal.CSRFToken,
+		ClientClass:       string(security.ClientClassHost),
+		TokenLoginAllowed: true,
+	})
+}
+
+// handleDeviceSession exchanges a device credential (web token or Ed25519
+// signature) for a device cookie session so browser clients get uniform
+// cookie-based auth, including WebSockets which cannot send headers.
+func (opts Options) handleDeviceSession(w http.ResponseWriter, r *http.Request) {
+	principal, err := opts.Auth.Authenticate(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if principal.Master {
+		writeError(w, http.StatusForbidden, "device sessions require a paired device credential")
+		return
+	}
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusForbidden, "no device credential on request")
+		return
+	}
+	session := opts.Auth.LoginDevice(w, principal)
+	writeJSON(w, http.StatusOK, authStatusResponse{
+		Authenticated: true,
+		CSRFToken:     session.CSRFToken,
+	})
 }
 
 func (opts Options) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -347,7 +478,7 @@ func (opts Options) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "unexpected origin")
 			return
 		}
-		if _, err := opts.Auth.Authorize(r); err != nil {
+		if _, err := opts.Auth.AuthorizeRequest(r); err != nil {
 			status := http.StatusUnauthorized
 			if err == security.ErrForbidden {
 				status = http.StatusForbidden
@@ -357,6 +488,56 @@ func (opts Options) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// accessGateMiddleware enforces network-level access rules before routing:
+// the banlist for LAN/tunnel real IPs, the remote-access toggle for non-host
+// clients (health stays reachable), and the allowlist for direct LAN
+// clients. Host clients are never filtered. It also records every client in
+// the tracker for the settings Network tab.
+func (opts Options) accessGateMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		info := security.ClassifyClient(r)
+		opts.clients.record(info)
+
+		if info.Class == security.ClientClassHost {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if r.URL.Path == "/api/v1/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if opts.IPFilter != nil && opts.IPFilter.Banned(info.RemoteIP) {
+			opts.Logger.Warn("client IP banned",
+				logging.RequestID(r.Header.Get("X-Request-ID")),
+				slog.String("client_ip", info.Key()),
+				slog.String("path", r.URL.Path),
+			)
+			writeError(w, http.StatusForbidden, "client IP banned")
+			return
+		}
+
+		if opts.RemoteSettings != nil && !opts.RemoteSettings.Get().RemoteAccessEnabled {
+			writeError(w, http.StatusForbidden, "remote access is disabled on this daemon")
+			return
+		}
+
+		if info.Class == security.ClientClassLAN && opts.IPFilter != nil &&
+			!opts.IPFilter.AllowedByAllowlist(info.RemoteIP) {
+			opts.Logger.Warn("client IP not allowed",
+				logging.RequestID(r.Header.Get("X-Request-ID")),
+				slog.String("client_ip", info.Key()),
+				slog.String("path", r.URL.Path),
+			)
+			writeError(w, http.StatusForbidden, "client IP not allowed")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (opts Options) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -884,6 +1065,10 @@ func (opts Options) handlePairingRequest(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
 		return
 	}
+	if !opts.pairingLimiter.allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many pairing attempts; try again later")
+		return
+	}
 	var req pairingRequestPayload
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -897,13 +1082,92 @@ func (opts Options) handlePairingRequest(w http.ResponseWriter, r *http.Request)
 		DeviceID:   req.DeviceID,
 		DeviceName: req.DeviceName,
 		Platform:   req.Platform,
-		PublicKey:   req.PublicKey,
+		PublicKey:  req.PublicKey,
 	})
 	if !ok {
 		writeError(w, http.StatusTooManyRequests, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+	// Echo the verification code so the requesting device can display it
+	// next to the same code shown in the daemon approval dialog.
+	writeJSON(w, http.StatusOK, pairingSubmitResponse{
+		Status: "pending",
+		Code:   opts.Pairing.PendingCode(req.DeviceID),
+	})
+}
+
+type pairingSubmitResponse struct {
+	Status string `json:"status"`
+	Code   string `json:"code,omitempty"`
+}
+
+type pairingWebRequest struct {
+	DeviceName string `json:"device_name"`
+}
+
+type pairingWebResponse struct {
+	RequestID string `json:"request_id"`
+	Code      string `json:"code"`
+	Secret    string `json:"secret"`
+}
+
+type pairingWebPollResponse struct {
+	Status      string `json:"status"`
+	DeviceToken string `json:"device_token,omitempty"`
+}
+
+// handlePairingWebSubmit starts a web-device pairing flow from a remote
+// browser. Unauthenticated by design; the 6-digit code and the approval
+// dialog provide the trust decision, and the poll secret gates token claim.
+func (opts Options) handlePairingWebSubmit(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
+		return
+	}
+	if !security.SameOrigin(r) {
+		writeError(w, http.StatusForbidden, "unexpected origin")
+		return
+	}
+	if !opts.pairingLimiter.allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many pairing attempts; try again later")
+		return
+	}
+	var req pairingWebRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.DeviceName == "" {
+		writeError(w, http.StatusBadRequest, "device_name is required")
+		return
+	}
+	requestID, code, secret, errMsg := opts.Pairing.SubmitWebRequest(req.DeviceName)
+	if errMsg != "" {
+		writeError(w, http.StatusTooManyRequests, errMsg)
+		return
+	}
+	writeJSON(w, http.StatusOK, pairingWebResponse{RequestID: requestID, Code: code, Secret: secret})
+}
+
+// handlePairingWebPoll lets the requesting browser poll its pairing status.
+// The secret from submission is required; the device token is returned
+// exactly once, on the first poll after acceptance.
+func (opts Options) handlePairingWebPoll(w http.ResponseWriter, r *http.Request) {
+	if opts.Pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing not enabled")
+		return
+	}
+	requestID := r.PathValue("id")
+	if requestID == "" {
+		writeError(w, http.StatusBadRequest, "request id is required")
+		return
+	}
+	status, token := opts.Pairing.PollWebRequest(requestID, r.Header.Get("X-Pairing-Secret"))
+	if status == security.PairingStatusUnknown {
+		writeError(w, http.StatusNotFound, "unknown pairing request")
+		return
+	}
+	writeJSON(w, http.StatusOK, pairingWebPollResponse{Status: string(status), DeviceToken: token})
 }
 
 func (opts Options) handlePairingStatus(w http.ResponseWriter, r *http.Request) {
@@ -993,6 +1257,371 @@ func (opts Options) handlePairingDeviceRemove(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (opts Options) handlePairingDeviceRename(w http.ResponseWriter, r *http.Request) {
+	if opts.Devices == nil {
+		writeError(w, http.StatusServiceUnavailable, "device management not available")
+		return
+	}
+	deviceID := r.PathValue("id")
+	if deviceID == "" {
+		writeError(w, http.StatusBadRequest, "device id is required")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "name is too long")
+		return
+	}
+	if !opts.Devices.Rename(deviceID, req.Name) {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type networkSettingsResponse struct {
+	RemoteAccessEnabled bool     `json:"remote_access_enabled"`
+	LANIPs              []string `json:"lan_ips"`
+	Allowlist           []string `json:"allowlist"`
+	Banlist             []string `json:"banlist"`
+}
+
+type networkSettingsRequest struct {
+	RemoteAccessEnabled *bool `json:"remote_access_enabled"`
+}
+
+type networkEntryRequest struct {
+	Entry string `json:"entry"`
+}
+
+type networkClientDTO struct {
+	Key               string `json:"key"`
+	IP                string `json:"ip"`
+	Class             string `json:"class"`
+	MAC               string `json:"mac,omitempty"`
+	Hostname          string `json:"hostname,omitempty"`
+	CustomName        string `json:"custom_name,omitempty"`
+	FirstSeen         int64  `json:"first_seen"`
+	LastSeen          int64  `json:"last_seen"`
+	ActiveConnections int    `json:"active_connections"`
+}
+
+type networkClientsResponse struct {
+	Clients []networkClientDTO `json:"clients"`
+}
+
+func (opts Options) handleNetworkSettingsGet(w http.ResponseWriter, r *http.Request) {
+	resp := networkSettingsResponse{
+		LANIPs:    LANAddresses(),
+		Allowlist: []string{},
+		Banlist:   []string{},
+	}
+	if opts.RemoteSettings != nil {
+		resp.RemoteAccessEnabled = opts.RemoteSettings.Get().RemoteAccessEnabled
+	}
+	if opts.IPFilter != nil {
+		resp.Allowlist, resp.Banlist = opts.IPFilter.Lists()
+	}
+	if resp.Allowlist == nil {
+		resp.Allowlist = []string{}
+	}
+	if resp.Banlist == nil {
+		resp.Banlist = []string{}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (opts Options) handleNetworkSettingsPut(w http.ResponseWriter, r *http.Request) {
+	if opts.RemoteSettings == nil {
+		writeError(w, http.StatusServiceUnavailable, "settings store not available")
+		return
+	}
+	var req networkSettingsRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.RemoteAccessEnabled == nil {
+		writeError(w, http.StatusBadRequest, "remote_access_enabled is required")
+		return
+	}
+	next := opts.RemoteSettings.Get()
+	next.RemoteAccessEnabled = *req.RemoteAccessEnabled
+	if err := opts.RemoteSettings.Set(next); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	opts.recordAudit("settings.updated", "", map[string]any{
+		"remote_access_enabled": next.RemoteAccessEnabled,
+	})
+	writeJSON(w, http.StatusOK, networkSettingsResponse{
+		RemoteAccessEnabled: next.RemoteAccessEnabled,
+		LANIPs:              LANAddresses(),
+	})
+}
+
+func (opts Options) handleNetworkAllowAdd(w http.ResponseWriter, r *http.Request) {
+	opts.mutateIPList(w, r, "allow")
+}
+
+func (opts Options) handleNetworkAllowRemove(w http.ResponseWriter, r *http.Request) {
+	opts.mutateIPList(w, r, "unallow")
+}
+
+func (opts Options) handleNetworkBanAdd(w http.ResponseWriter, r *http.Request) {
+	opts.mutateIPList(w, r, "ban")
+}
+
+func (opts Options) handleNetworkBanRemove(w http.ResponseWriter, r *http.Request) {
+	opts.mutateIPList(w, r, "unban")
+}
+
+func (opts Options) mutateIPList(w http.ResponseWriter, r *http.Request, action string) {
+	if opts.IPFilter == nil {
+		writeError(w, http.StatusServiceUnavailable, "ip filtering not available")
+		return
+	}
+	var req networkEntryRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Entry == "" {
+		writeError(w, http.StatusBadRequest, "entry is required")
+		return
+	}
+	var err error
+	switch action {
+	case "allow":
+		err = opts.IPFilter.Allow(req.Entry)
+	case "unallow":
+		err = opts.IPFilter.Unallow(req.Entry)
+	case "ban":
+		err = opts.IPFilter.Ban(req.Entry)
+	case "unban":
+		err = opts.IPFilter.Unban(req.Entry)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	opts.recordAudit("network."+action, "", map[string]any{"entry": req.Entry})
+	allowed, banned := opts.IPFilter.Lists()
+	remoteEnabled := true
+	if opts.RemoteSettings != nil {
+		remoteEnabled = opts.RemoteSettings.Get().RemoteAccessEnabled
+	}
+	writeJSON(w, http.StatusOK, networkSettingsResponse{
+		RemoteAccessEnabled: remoteEnabled,
+		LANIPs:              LANAddresses(),
+		Allowlist:           allowed,
+		Banlist:             banned,
+	})
+}
+
+func (opts Options) handleNetworkClients(w http.ResponseWriter, r *http.Request) {
+	arp := opts.clients.loadARP()
+	out := make([]networkClientDTO, 0)
+	for _, entry := range opts.clients.list() {
+		dto := networkClientDTO{
+			IP:                entry.IP,
+			Class:             string(entry.Class),
+			FirstSeen:         entry.FirstSeen.Unix(),
+			LastSeen:          entry.LastSeen.Unix(),
+			ActiveConnections: entry.Conns,
+		}
+		if mac, ok := arp[entry.IP]; ok {
+			dto.MAC = mac
+		}
+		// The rename key prefers the MAC so names survive IP changes.
+		dto.Key = clientKey(dto.MAC, dto.IP)
+		if name := opts.KnownClients.Name(dto.Key); name != "" {
+			dto.CustomName = name
+		}
+		if entry.Class == security.ClientClassLAN {
+			dto.Hostname = opts.clients.hostname(entry.IP)
+		}
+		out = append(out, dto)
+	}
+	writeJSON(w, http.StatusOK, networkClientsResponse{Clients: out})
+}
+
+func (opts Options) handleNetworkClientRename(w http.ResponseWriter, r *http.Request) {
+	if opts.KnownClients == nil {
+		writeError(w, http.StatusServiceUnavailable, "client naming not available")
+		return
+	}
+	key := r.PathValue("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "client key is required")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "name is too long")
+		return
+	}
+	if err := opts.KnownClients.Rename(key, req.Name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	opts.recordAudit("network.client_renamed", "", map[string]any{"key": key})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// clientKey prefers the MAC (stable across DHCP changes) over the IP.
+func clientKey(mac, ip string) string {
+	if mac != "" {
+		return mac
+	}
+	return ip
+}
+
+func (opts Options) handleTunnelAvailable(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, tunnelAvailableResponse{
+		Available: tunnel.IsAvailable(),
+		Binary:    tunnel.BinaryPath(),
+	})
+}
+
+func (opts Options) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
+	if opts.Tunnel == nil {
+		writeJSON(w, http.StatusOK, tunnelResponse{Status: string(tunnel.StatusStopped)})
+		return
+	}
+	info := opts.Tunnel.Info()
+	writeJSON(w, http.StatusOK, tunnelResponse{
+		Status: string(info.Status),
+		URL:    info.URL,
+		Error:  info.Error,
+	})
+}
+
+func (opts Options) handleTunnelStart(w http.ResponseWriter, r *http.Request) {
+	if opts.Tunnel == nil {
+		writeError(w, http.StatusServiceUnavailable, "tunnel not configured")
+		return
+	}
+	if err := opts.Tunnel.Start(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	info := opts.Tunnel.Info()
+	writeJSON(w, http.StatusOK, tunnelResponse{
+		Status: string(info.Status),
+		URL:    info.URL,
+		Error:  info.Error,
+	})
+}
+
+func (opts Options) handleTunnelStop(w http.ResponseWriter, r *http.Request) {
+	if opts.Tunnel == nil {
+		writeJSON(w, http.StatusOK, tunnelResponse{Status: string(tunnel.StatusStopped)})
+		return
+	}
+	if err := opts.Tunnel.Stop(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	info := opts.Tunnel.Info()
+	writeJSON(w, http.StatusOK, tunnelResponse{
+		Status: string(info.Status),
+		URL:    info.URL,
+		Error:  info.Error,
+	})
+}
+
+func (opts Options) handleTunnelConfigGet(w http.ResponseWriter, r *http.Request) {
+	if opts.Tunnel == nil {
+		writeJSON(w, http.StatusOK, tunnelConfigResponse{Mode: string(tunnel.ModeQuick)})
+		return
+	}
+	view := opts.Tunnel.ViewConfig()
+	writeJSON(w, http.StatusOK, tunnelConfigResponse{
+		Mode:     string(view.Mode),
+		Hostname: view.Hostname,
+		TokenSet: view.TokenSet,
+	})
+}
+
+func (opts Options) handleTunnelConfigPut(w http.ResponseWriter, r *http.Request) {
+	if opts.Tunnel == nil {
+		writeError(w, http.StatusServiceUnavailable, "tunnel not configured")
+		return
+	}
+	var req tunnelConfigRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	err := opts.Tunnel.UpdateConfig(tunnel.Config{
+		Mode:     tunnel.Mode(req.Mode),
+		Token:    req.Token,
+		Hostname: req.Hostname,
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, tunnel.ErrTunnelActive):
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	default:
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	view := opts.Tunnel.ViewConfig()
+	writeJSON(w, http.StatusOK, tunnelConfigResponse{
+		Mode:     string(view.Mode),
+		Hostname: view.Hostname,
+		TokenSet: view.TokenSet,
+	})
+}
+
+func (opts Options) handleTunnelBinary(w http.ResponseWriter, r *http.Request) {
+	path, source := tunnel.ResolveBinary()
+	resp := tunnelBinaryResponse{ManagedPath: tunnel.ManagedBinaryPath()}
+	if path != "" {
+		resp.Path = path
+		resp.Source = string(source)
+		if version, err := tunnel.BinaryVersion(r.Context(), path); err == nil {
+			resp.Version = version
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (opts Options) handleTunnelDownload(w http.ResponseWriter, r *http.Request) {
+	downloader := tunnel.NewDownloader()
+	if opts.TunnelDownloadAPI != "" {
+		downloader.API = opts.TunnelDownloadAPI
+	}
+	version, path, err := downloader.InstallLatest(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("cloudflared download failed: %v", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, tunnelDownloadResponse{Version: version, Path: path})
+}
+
+func (opts Options) handleTunnelLogs(w http.ResponseWriter, r *http.Request) {
+	if opts.Tunnel == nil {
+		writeJSON(w, http.StatusOK, tunnelLogsResponse{Lines: []string{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, tunnelLogsResponse{Lines: opts.Tunnel.Logs()})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -1214,41 +1843,6 @@ func parseUintQuery(r *http.Request, key string) (uint64, error) {
 		return 0, fmt.Errorf("%s must be an unsigned integer", key)
 	}
 	return parsed, nil
-}
-
-func ipAllowlistMiddleware(allowed []config.AllowedIP, logger *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if len(allowed) == 0 {
-				next.ServeHTTP(w, r)
-				return
-			}
-			host, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				host = r.RemoteAddr
-			}
-			clientIP := net.ParseIP(host)
-			if clientIP == nil {
-				writeError(w, http.StatusForbidden, "client IP not allowed")
-				return
-			}
-			for _, entry := range allowed {
-				if entry.CIDR != nil && entry.CIDR.Contains(clientIP) {
-					next.ServeHTTP(w, r)
-					return
-				}
-				if entry.IP != nil && entry.IP.Equal(clientIP) {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			logger.Warn("client IP not allowed",
-				slog.String("client_ip", clientIP.String()),
-				slog.String("path", r.URL.Path),
-			)
-			writeError(w, http.StatusForbidden, "client IP not allowed")
-		})
-	}
 }
 
 func requestLogMiddleware(logger *slog.Logger, next http.Handler) http.Handler {

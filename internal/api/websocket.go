@@ -26,10 +26,11 @@ func (opts Options) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "unexpected origin")
 		return
 	}
-	if _, err := opts.Auth.Authenticate(r); err != nil {
+	if _, err := opts.Auth.AuthorizeRequest(r); err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	clientKey := security.ClassifyClient(r).Key()
 	sessionID := r.URL.Query().Get("session_id")
 	if sessionID != "" {
 		if _, ok := opts.Sessions.Get(sessionID); !ok {
@@ -58,6 +59,9 @@ func (opts Options) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	opts.clients.connOpen(clientKey)
+	defer opts.clients.connClose(clientKey)
+
 	if _, err := fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", websocketAccept(key)); err != nil {
 		return
 	}
@@ -65,17 +69,23 @@ func (opts Options) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, event := range opts.Events.History(sessionID, afterSeq, 100) {
-		if err := writeWebSocketJSON(conn, event); err != nil {
-			return
-		}
-	}
-
+	// Subscribe before replaying history so no event published in between
+	// is lost; events covered by the replay are then skipped by sequence.
 	sub := opts.Events.Subscribe(events.SubscribeOptions{
 		SessionID: sessionID,
 		Buffer:    128,
 	})
 	defer sub.Close()
+
+	replayed := make(map[string]uint64)
+	for _, event := range opts.Events.History(sessionID, afterSeq, 100) {
+		if err := writeWebSocketJSON(conn, event); err != nil {
+			return
+		}
+		if event.Sequence > replayed[event.SessionID] {
+			replayed[event.SessionID] = event.Sequence
+		}
+	}
 
 	for {
 		select {
@@ -86,6 +96,9 @@ func (opts Options) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if afterSeq > 0 && event.SessionID == sessionID && event.Sequence <= afterSeq {
+				continue
+			}
+			if seq, ok := replayed[event.SessionID]; ok && event.Sequence > 0 && event.Sequence <= seq {
 				continue
 			}
 			if err := writeWebSocketJSON(conn, event); err != nil {

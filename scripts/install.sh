@@ -122,6 +122,38 @@ if [ ! -e "$config_file" ]; then
 	trap - EXIT HUP INT TERM
 fi
 
+# Best-effort managed cloudflared download for the remote-access tunnel.
+# Failure is never fatal: the dashboard can download it later (Settings >
+# Tunnel). HARNESSRELAY_SKIP_CLOUDFLARED_DOWNLOAD=1 skips this step.
+cloudflared_dir="$data_dir/bin"
+cloudflared_bin="$cloudflared_dir/cloudflared"
+if [ ! -f "$cloudflared_bin" ] && [ "${HARNESSRELAY_SKIP_CLOUDFLARED_DOWNLOAD:-}" != "1" ]; then
+	case "$(uname -m)" in
+		x86_64) cloudflared_arch=amd64 ;;
+		aarch64|arm64) cloudflared_arch=arm64 ;;
+		*) cloudflared_arch="" ;;
+	esac
+	if [ -n "$cloudflared_arch" ] && command -v curl >/dev/null 2>&1; then
+		cloudflared_url=${HARNESSRELAY_CLOUDFLARED_DOWNLOAD_URL:-"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cloudflared_arch"}
+		mkdir -p "$cloudflared_dir"
+		cloudflared_tmp=$(mktemp "$cloudflared_dir/.cloudflared.XXXXXX")
+		if curl -fsSL --max-time 300 -o "$cloudflared_tmp" "$cloudflared_url"; then
+			chmod 755 "$cloudflared_tmp"
+			if "$cloudflared_tmp" --version >/dev/null 2>&1; then
+				mv -f "$cloudflared_tmp" "$cloudflared_bin"
+			else
+				rm -f "$cloudflared_tmp"
+				printf '%s\n' "install: downloaded cloudflared failed its version check; skipped (download it later from the dashboard)"
+			fi
+		else
+			rm -f "$cloudflared_tmp"
+			printf '%s\n' "install: cloudflared download failed; skipped (download it later from the dashboard)"
+		fi
+	else
+		printf '%s\n' "install: cloudflared not downloaded (unsupported arch or curl missing); download it later from the dashboard"
+	fi
+fi
+
 manifest_tmp=$(mktemp "$config_dir/.install-manifest.XXXXXX")
 trap 'rm -f "$manifest_tmp"' EXIT HUP INT TERM
 {
@@ -141,6 +173,9 @@ trap - EXIT HUP INT TERM
 printf '\nHarnessRelay %s.\n\n' "$mode"
 printf 'Binaries:\n  %s\n  %s\n\n' "$bin_dir/harnessctl" "$bin_dir/harnessd"
 printf 'Config:\n  %s\n  stable token: %s (0600)\n\n' "$config_file" "$token_file"
+if [ -f "$cloudflared_bin" ]; then
+	printf 'Tunnel binary:\n  %s\n\n' "$cloudflared_bin"
+fi
 case ":${PATH:-}:" in
 	*":$bin_dir:"*) printf '%s\n\n' "CLI PATH: ready" ;;
 	*)

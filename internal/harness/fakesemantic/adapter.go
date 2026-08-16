@@ -54,7 +54,7 @@ func (Adapter) PromptBytes(text string, _ []byte) []byte {
 func (Adapter) ExecuteAction(actionID string) (harness.ActionResult, bool) {
 	if actionID == "fake.silent" {
 		return harness.ActionResult{
-			TerminalInput:  []byte("confirm\r"),
+			TerminalInput: []byte("confirm\r"),
 			ClearsPending: true,
 		}, true
 	}

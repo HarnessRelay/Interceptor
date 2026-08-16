@@ -13,13 +13,42 @@ import (
 
 const pairedDevicesFile = "paired_devices.json"
 
+// Device types recorded on paired devices.
+const (
+	DeviceTypeMobile = "mobile"
+	DeviceTypeWeb    = "web"
+)
+
+// DeviceTokenPrefix marks opaque web-device credentials (vs the master token).
+const DeviceTokenPrefix = "hrk_"
+
 type PairedDevice struct {
 	DeviceID   string    `json:"device_id"`
 	DeviceName string    `json:"device_name"`
 	Platform   string    `json:"platform"`
 	PublicKey  string    `json:"public_key"` // base64-encoded ed25519 public key
+	Type       string    `json:"type,omitempty"`
+	TokenHash  string    `json:"token_hash,omitempty"` // hex sha256 of the hrk_ token (web devices)
+	CustomName string    `json:"custom_name,omitempty"`
 	PairedAt   time.Time `json:"paired_at"`
 	LastSeen   time.Time `json:"last_seen"`
+}
+
+// EffectiveType returns the device type, defaulting to mobile for records
+// created before types existed.
+func (d PairedDevice) EffectiveType() string {
+	if d.Type == "" {
+		return DeviceTypeMobile
+	}
+	return d.Type
+}
+
+// DisplayName returns the user-assigned name or the original device name.
+func (d PairedDevice) DisplayName() string {
+	if d.CustomName != "" {
+		return d.CustomName
+	}
+	return d.DeviceName
 }
 
 type pairedDevicesData struct {
@@ -126,6 +155,40 @@ func (s *PairedDeviceStore) Touch(deviceID string) {
 	dev.LastSeen = time.Now()
 	s.devices[deviceID] = dev
 	_ = s.save() // best-effort
+}
+
+// Rename sets or clears (empty name) the user-assigned display name.
+func (s *PairedDeviceStore) Rename(deviceID, name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dev, ok := s.devices[deviceID]
+	if !ok {
+		return false
+	}
+	dev.CustomName = name
+	s.devices[deviceID] = dev
+	if err := s.save(); err != nil {
+		return false
+	}
+	if s.onChange != nil {
+		s.onChange()
+	}
+	return true
+}
+
+// FindByTokenHash locates a web device by the SHA-256 hex hash of its token.
+func (s *PairedDeviceStore) FindByTokenHash(tokenHash string) (PairedDevice, bool) {
+	if tokenHash == "" {
+		return PairedDevice{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, dev := range s.devices {
+		if dev.TokenHash == tokenHash {
+			return dev, true
+		}
+	}
+	return PairedDevice{}, false
 }
 
 func (s *PairedDeviceStore) List() []PairedDevice {

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, setCSRFToken } from "../api/client";
-import type { EventEnvelope, HarnessPreset, SemanticEventData, Session, ViewMode } from "../types";
+import type { AuthStatus, EventEnvelope, HarnessPreset, SemanticEventData, Session, ViewMode } from "../types";
 import { EmptyState } from "./EmptyState";
 import { EventInspector } from "./EventInspector";
 import { LoginScreen } from "./LoginScreen";
 import { SessionHeader } from "./SessionHeader";
+import { SettingsView } from "./SettingsView";
 import { Sidebar } from "./Sidebar";
 import { ChatView } from "./ChatView";
 import type { ChatMessage, ChatMessagesUpdater } from "./ChatView";
@@ -20,11 +21,13 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [harnesses, setHarnesses] = useState<HarnessPreset[]>([]);
   const [modeBySession, setModeBySession] = useState<Record<string, ViewMode>>({});
   const [chatMessagesBySession, setChatMessagesBySession] = useState<Record<string, ChatMessage[]>>(readStoredChatMessages);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [createSignal, setCreateSignal] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const active = useMemo(
     () => sessions.find((session) => session.id === activeID) || null,
@@ -59,6 +62,7 @@ export function App() {
   useEffect(() => {
     api.authStatus()
       .then((status) => {
+        setAuthStatus(status);
         setAuthenticated(status.authenticated);
         setCSRFToken(status.csrf_token || "");
         if (status.authenticated) {
@@ -79,8 +83,16 @@ export function App() {
 
   const handleLogin = async (token: string) => {
     const status = await api.login(token);
+    setAuthStatus(status);
     setCSRFToken(status.csrf_token || "");
     setAuthenticated(status.authenticated);
+    await Promise.all([refreshSessions(), refreshHarnesses()]);
+  };
+
+  const handleDeviceAuthenticated = async (csrfToken: string) => {
+    setCSRFToken(csrfToken);
+    setAuthenticated(true);
+    setAuthStatus((current) => (current ? { ...current, authenticated: true } : current));
     await Promise.all([refreshSessions(), refreshHarnesses()]);
   };
 
@@ -121,7 +133,16 @@ export function App() {
   const activeMessages = active ? chatMessagesBySession[active.id] || [] : [];
 
   if (!authenticated) {
-    return <LoginScreen loading={loading} error={error} onLogin={handleLogin} onError={setError} />;
+    return (
+      <LoginScreen
+        loading={loading}
+        error={error}
+        authStatus={authStatus}
+        onLogin={handleLogin}
+        onDeviceAuthenticated={handleDeviceAuthenticated}
+        onError={setError}
+      />
+    );
   }
 
   return (
@@ -131,10 +152,15 @@ export function App() {
         harnesses={harnesses}
         activeID={activeID}
         loading={loading}
+        settingsOpen={settingsOpen}
+        onOpenSettings={() => setSettingsOpen(true)}
         onRefresh={() => refreshSessions().catch((err) => setError(err.message))}
         onCreated={handleCreated}
         onError={setError}
-        onSelect={setActiveID}
+        onSelect={(id) => {
+          setActiveID(id);
+          setSettingsOpen(false);
+        }}
         modeBySession={modeBySession}
         createSignal={createSignal}
       />
@@ -146,7 +172,9 @@ export function App() {
             <button onClick={() => setError(null)}>Dismiss</button>
           </div>
         )}
-        {active ? (
+        {settingsOpen ? (
+          <SettingsView onClose={() => setSettingsOpen(false)} onError={setError} />
+        ) : active ? (
           <>
             <SessionHeader
               session={active}
